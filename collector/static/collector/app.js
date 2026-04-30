@@ -2,12 +2,16 @@ import { extractPhotoLocationFromImage, requestCurrentDeviceDirection, requestCu
 import { loadActivityCatalog } from "./activity-catalog.js";
 
 const API_BUILDINGS = "/api/buildings/";
+const API_ASSET_JSON = "/api/assets/json/";
+const API_ASSET_IMAGE = "/api/assets/image/";
 const API_RECORDS = "/api/records/";
 const API_RECORDS_NEXT_CLUSTER = "/api/records/next-cluster/";
 const API_RECORDS_EXPORT = "/api/records/export/";
 const API_SITE_OBSERVATIONS = "/api/site-observations/";
 const API_PERSON_QUESTIONNAIRE_RESPONSES = "/api/person-questionnaire-responses/";
-const DEFAULT_LOCATE_STATUS_MESSAGE = "Use Locate via GPS for your approximate spot, or Locate via POI to show named places.";
+const PIC_VIEWER_TEMPLATE_URL = "/static/collector/panorama-viewer.html";
+const DEFAULT_LOCATE_STATUS_MESSAGE =
+  "Use Locate via GPS for your approximate spot, Locate via POI to show named places, or Locate via Pic to preview linked images.";
 const DEFAULT_OBSERVATION_STATUS_MESSAGE = "Site Observations";
 const OBSERVATION_MODAL_MODE_NOTE = "note";
 const OBSERVATION_MODAL_MODE_QUESTIONS = "questions";
@@ -145,6 +149,7 @@ const collectControls = collectToggleBtn ? collectToggleBtn.closest(".collect-co
 const collectStatus = document.getElementById("collectStatus");
 const locateViaGpsBtn = document.getElementById("locateViaGpsBtn");
 const locateViaPoiBtn = document.getElementById("locateViaPoiBtn");
+const locateViaPicBtn = document.getElementById("locateViaPicBtn");
 const locateStatus = document.getElementById("locateStatus");
 const zoomOutBtn = document.getElementById("zoomOutBtn");
 const zoomInBtn = document.getElementById("zoomInBtn");
@@ -166,6 +171,8 @@ const grpCounterDown = document.getElementById("grpCounterDown");
 const grpCounterUp = document.getElementById("grpCounterUp");
 const groupValue = document.getElementById("groupValue");
 const groupCounterContainer = document.getElementById("groupCounterContainer");
+const largeGroupModeContainer = document.getElementById("largeGroupModeContainer");
+const largeGroupModeSelect = document.getElementById("largeGroupModeSelect");
 const groupInteractionPanel = document.getElementById("groupInteractionPanel");
 const groupInteractionButtons = Array.from(document.querySelectorAll(".group-interaction-btn[data-group-interaction]"));
 const groupActivityTypologyFields = document.getElementById("groupActivityTypologyFields");
@@ -176,6 +183,12 @@ const individualDetailFields = document.getElementById("individualDetailFields")
 const groupDetailsPanel = document.getElementById("groupDetailsPanel");
 const groupDetailsHint = document.getElementById("groupDetailsHint");
 const groupPersonList = document.getElementById("groupPersonList");
+const largeGroupFields = document.getElementById("largeGroupFields");
+const largeGroupHint = document.getElementById("largeGroupHint");
+const largeGroupSizeRange = document.getElementById("largeGroupSizeRange");
+const largeGroupGenderComposition = document.getElementById("largeGroupGenderComposition");
+const largeGroupAgeComposition = document.getElementById("largeGroupAgeComposition");
+const largeGroupActivityDescription = document.getElementById("largeGroupActivityDescription");
 const savePrompt = document.getElementById("savePrompt");
 const groupPointModal = document.getElementById("groupPointModal");
 const groupPointForm = document.getElementById("groupPointForm");
@@ -192,6 +205,7 @@ const groupPointActivityCategoryButtons = Array.from(
 const groupPointActivityButtons = Array.from(document.querySelectorAll(".group-point-activity-btn"));
 const groupPointActivityHint = document.getElementById("groupPointActivityHint");
 const groupPointGenderButtons = Array.from(document.querySelectorAll(".group-point-gender-btn"));
+const groupPointEthnicButtons = Array.from(document.querySelectorAll(".group-point-ethnic-btn"));
 const groupPointAgeButtons = Array.from(document.querySelectorAll(".group-point-age-btn"));
 const groupPointExpressionButtons = Array.from(document.querySelectorAll(".group-point-expression-btn"));
 const observationFabStack = document.querySelector(".observation-fab-stack");
@@ -239,8 +253,14 @@ const activityNotePrompt = document.getElementById("activityNotePrompt");
 const activityNoteClearBtn = document.getElementById("activityNoteClearBtn");
 const activityNoteCancelBtn = document.getElementById("activityNoteCancelBtn");
 const activityNoteSaveBtn = document.getElementById("activityNoteSaveBtn");
+const picPreviewModal = document.getElementById("picPreviewModal");
+const picPreviewFrame = document.getElementById("picPreviewFrame");
+const picPreviewModalCoords = document.getElementById("picPreviewModalCoords");
+const picPreviewCloseBtn = document.getElementById("picPreviewCloseBtn");
 const poiMapsCache = new Map();
 const poiLoadPromises = new Map();
+const photoMapsCache = new Map();
+const photoLoadPromises = new Map();
 const GROUP_ACTIVITY_TYPOLOGY_OPTIONS = groupActivityTypologyButtons.length
   ? groupActivityTypologyButtons
       .map((button) => button.dataset.groupActivityTypology || "")
@@ -276,7 +296,9 @@ let userLocationPoint = null;
 let isLocatingViaGps = false;
 let isLocatingViaPoi = false;
 let poiVisible = false;
+let picOverlayVisible = false;
 let poiRequestToken = 0;
+let photoRequestToken = 0;
 let shouldAnimatePois = false;
 let lastZoomAnchor = null;
 let pinchStartDistance = 0;
@@ -286,6 +308,7 @@ let groupPointModalState = null;
 let groupPointSelectedActivityCategory = "";
 let groupPointSelectedActivityTypes = [];
 let groupPointSelectedGender = "";
+let groupPointSelectedEthnicGroup = "";
 let groupPointSelectedAgeGroup = "";
 let groupPointSelectedFacialExpression = "";
 let groupInteractionMode = "";
@@ -299,6 +322,17 @@ let questionnaireSelectionStep = "select";
 let questionnaireQuestionIndex = 0;
 let questionnaireResponses = {};
 let isSavingPersonQuestionnaire = false;
+let largeGroupMode = null;
+
+const LARGE_GROUP_GENDER_OPTIONS = ["only male", "majority male", "half-half", "majority female", "only female"];
+const LARGE_GROUP_AGE_OPTIONS = [
+  "only young people",
+  "majority young people",
+  "all age group",
+  "majority elderly",
+  "only elderly",
+];
+const LARGE_GROUP_SIZE_OPTIONS = ["9-20 people", "20-50 people", "50-100 people", "more than 100 people"];
 
 initialize().catch((error) => {
   console.error("Initialization failed:", error);
@@ -385,6 +419,12 @@ async function initialize() {
     grpCounterUp.addEventListener("click", () => changeGroupCount(1));
     grpCounterDown.addEventListener("click", () => changeGroupCount(-1));
   }
+  if (largeGroupModeSelect) {
+    largeGroupModeSelect.addEventListener("change", () => {
+      const selectedMode = largeGroupModeSelect.value;
+      setLargeGroupMode(selectedMode ? selectedMode === "large" : null);
+    });
+  }
   groupInteractionButtons.forEach((button) => {
     button.addEventListener("click", () => setGroupInteractionMode(button.dataset.groupInteraction || ""));
   });
@@ -396,6 +436,17 @@ async function initialize() {
   }
   if (locateViaPoiBtn) {
     locateViaPoiBtn.addEventListener("click", onLocateViaPoi);
+  }
+  if (locateViaPicBtn) {
+    locateViaPicBtn.addEventListener("click", () => {
+      void onLocateViaPic();
+    });
+  }
+  if (picPreviewCloseBtn) {
+    picPreviewCloseBtn.addEventListener("click", () => closePicPreviewModal());
+  }
+  if (picPreviewModal) {
+    picPreviewModal.addEventListener("click", onPicPreviewModalClick);
   }
   if (groupPointForm) {
     groupPointForm.addEventListener("submit", onGroupPointFormSubmit);
@@ -481,6 +532,9 @@ async function initialize() {
   });
   groupPointGenderButtons.forEach((button) => {
     button.addEventListener("click", () => setGroupPointSelectedGender(button.dataset.groupPointGender || ""));
+  });
+  groupPointEthnicButtons.forEach((button) => {
+    button.addEventListener("click", () => setGroupPointSelectedEthnicGroup(button.dataset.groupPointEthnicGroup || ""));
   });
   groupPointAgeButtons.forEach((button) => {
     button.addEventListener("click", () => setGroupPointSelectedAgeGroup(button.dataset.groupPointAgeLabel || ""));
@@ -577,6 +631,8 @@ function onBuildingChange(event) {
   renderRecords();
   if (poiVisible) {
     void refreshPoiOverlayForCurrentFloor({ animate: true, loadingMessage: "Loading POIs for this floor..." });
+  } else if (picOverlayVisible) {
+    void refreshPhotoOverlayForCurrentFloor({ loadingMessage: "Loading photos for this floor..." });
   }
 }
 
@@ -592,6 +648,8 @@ function onFloorChange(event) {
   renderRecords();
   if (poiVisible) {
     void refreshPoiOverlayForCurrentFloor({ animate: true, loadingMessage: "Loading POIs for this floor..." });
+  } else if (picOverlayVisible) {
+    void refreshPhotoOverlayForCurrentFloor({ loadingMessage: "Loading photos for this floor..." });
   }
 }
 
@@ -680,6 +738,44 @@ function isInteractingGroup() {
   return isGroupMode() && groupInteractionMode === GROUP_INTERACTION_INTERACTING;
 }
 
+function isLargeGroupMode() {
+  return isGroupMode() && largeGroupMode === true;
+}
+
+function hasGroupSizeModeChoice() {
+  return isGroupMode() && largeGroupMode !== null;
+}
+
+function setLargeGroupMode(enabled, { keepStatus = false } = {}) {
+  const previousLargeGroupMode = largeGroupMode;
+  largeGroupMode = enabled === null ? null : !!enabled;
+  if (largeGroupModeSelect) {
+    largeGroupModeSelect.value = largeGroupMode === null ? "" : largeGroupMode ? "large" : "small";
+  }
+
+  if (previousLargeGroupMode !== largeGroupMode) {
+    selectedPoints = [];
+    draftGroupPoint = null;
+    closeGroupPointModal({ discardDraft: true, keepStatus: true });
+    setGroupInteractionMode("", { resetPoints: false, keepStatus: true });
+  }
+
+  if (isLargeGroupMode() && selectedPoints.length > 1) {
+    selectedPoints = selectedPoints.slice(0, 1);
+  }
+  if (isLargeGroupMode() && isGroupPointModalOpen()) {
+    closeGroupPointModal({ discardDraft: true, keepStatus: true });
+  }
+
+  syncLargeGroupModeUI();
+  updateSelectedCoordsText();
+  renderGroupPersonList();
+  renderMarkers();
+  if (!keepStatus && isCollecting && isGroupMode()) {
+    setCollectStatus(getGroupCaptureProgressMessage(), hasGroupSizeModeChoice() ? "active" : "warn");
+  }
+}
+
 function getCollectionActivatedMessage(mode) {
   if (mode === "group") {
     return getGroupCaptureProgressMessage();
@@ -691,6 +787,9 @@ function getCollectionActivatedMessage(mode) {
 
 function getGroupInteractionReadinessMessage() {
   if (!isGroupMode()) {
+    return "";
+  }
+  if (isLargeGroupMode()) {
     return "";
   }
   if (!groupInteractionMode) {
@@ -843,6 +942,13 @@ function changeGroupCount(delta) {
   if (selectedPoints.length > groupCount) {
     selectedPoints = selectedPoints.slice(0, groupCount);
   }
+
+  if (isLargeGroupMode() && selectedPoints.length > 1) {
+    selectedPoints = selectedPoints.slice(0, 1);
+  }
+  if (isLargeGroupMode() && isGroupPointModalOpen()) {
+    closeGroupPointModal({ discardDraft: true, keepStatus: true });
+  }
   if (
     draftGroupPoint && selectedPoints.length >= groupCount ||
     (groupPointModalState && Number.isInteger(groupPointModalState.index) && groupPointModalState.index >= groupCount)
@@ -858,6 +964,7 @@ function changeGroupCount(delta) {
     renderMarkers();
   }
   renderGroupPersonList();
+  syncLargeGroupModeUI();
   return groupCount;
 }
 
@@ -983,7 +1090,11 @@ function setSelectedFacialExpression(value) {
 
 function setRecordMode(value) {
   const mode = normalizeRecordMode(value);
+  const previousMode = recordMode.value;
   recordMode.value = mode;
+  if (mode === "group" && previousMode !== "group") {
+    largeGroupMode = null;
+  }
   indivGrpButtons.forEach((button) => {
     const isActive = button.dataset.indivgrpType === mode;
     button.classList.toggle("active", isActive);
@@ -993,25 +1104,79 @@ function setRecordMode(value) {
   activityFormHeading.textContent = headingText;
 
   if (groupCounterContainer) {
-    groupCounterContainer.style.display = mode === "group" ? "flex" : "none";
+    groupCounterContainer.style.display = "none";
+  }
+  if (largeGroupModeContainer) {
+    largeGroupModeContainer.hidden = mode !== "group";
+    largeGroupModeContainer.style.display = mode === "group" ? "block" : "none";
   }
   if (groupInteractionPanel) {
-    groupInteractionPanel.hidden = mode !== "group";
+    groupInteractionPanel.hidden = true;
+    groupInteractionPanel.style.display = "none";
   }
   if (individualDetailFields) {
     individualDetailFields.hidden = mode === "group";
   }
-  if (groupDetailsPanel) {
-    groupDetailsPanel.hidden = mode !== "group";
+  if (mode === "group") {
+    setSelectedEthnicGroup("");
   }
+  if (groupDetailsPanel) {
+    groupDetailsPanel.hidden = true;
+    groupDetailsPanel.style.display = "none";
+  }
+  syncLargeGroupModeUI();
   if (saveRecordBtn) {
     saveRecordBtn.textContent = mode === "group" ? "Save Group" : "Save Record";
   }
   if (mode !== "group") {
+    setLargeGroupMode(false, { keepStatus: true });
     closeGroupPointModal({ discardDraft: true, keepStatus: true });
     setGroupInteractionMode("", { resetPoints: false, keepStatus: true });
   }
   renderGroupPersonList();
+}
+
+function syncLargeGroupModeUI() {
+  const largeGroupActive = isLargeGroupMode();
+  const groupSizeModeSelected = hasGroupSizeModeChoice();
+  const smallGroupActive = isGroupMode() && groupSizeModeSelected && !largeGroupActive;
+
+  if (groupCounterContainer) {
+    groupCounterContainer.style.display = smallGroupActive ? "flex" : "none";
+  }
+
+  if (largeGroupFields) {
+    largeGroupFields.hidden = !largeGroupActive;
+    largeGroupFields.style.display = largeGroupActive ? "block" : "none";
+  }
+  if (groupInteractionPanel) {
+    groupInteractionPanel.hidden = !smallGroupActive;
+    groupInteractionPanel.style.display = smallGroupActive ? "block" : "none";
+  }
+  if (groupDetailsPanel) {
+    groupDetailsPanel.hidden = !smallGroupActive;
+    groupDetailsPanel.style.display = smallGroupActive ? "block" : "none";
+  }
+
+  if (largeGroupHint && largeGroupActive) {
+    largeGroupHint.textContent =
+      "Large group mode is active. Capture one representative map point, then fill general composition.";
+  }
+
+  if (!largeGroupActive) {
+    if (largeGroupSizeRange) {
+      largeGroupSizeRange.value = "";
+    }
+    if (largeGroupGenderComposition) {
+      largeGroupGenderComposition.value = "";
+    }
+    if (largeGroupAgeComposition) {
+      largeGroupAgeComposition.value = "";
+    }
+    if (largeGroupActivityDescription) {
+      largeGroupActivityDescription.value = "";
+    }
+  }
 }
 
 function updateSelectedCoordsText() {
@@ -1026,12 +1191,35 @@ function updateSelectedCoordsText() {
     return;
   }
 
+  if (isLargeGroupMode()) {
+    const [point] = selectedPoints;
+    if (!point) {
+      selectedCoords.textContent = "None";
+      return;
+    }
+
+    const sizeBand = getLargeGroupSizeBandLabel();
+    selectedCoords.textContent = `Representative point: ${point.xPct}%, ${point.yPct}% (size band: ${sizeBand})`;
+    return;
+  }
+
   const latestPoint = selectedPoints[selectedPoints.length - 1];
   selectedCoords.textContent = `${selectedPoints.length} of ${groupCount} members saved. Latest: ${latestPoint.xPct}%, ${latestPoint.yPct}%`;
 }
 
 function getGroupCaptureProgressMessage() {
   const clusterLabel = getCurrentClusterIdLabel();
+  if (isGroupMode() && !hasGroupSizeModeChoice()) {
+    return `Group capture active for ${clusterLabel}. Choose small group or large group to continue.`;
+  }
+  if (isLargeGroupMode()) {
+    const sizeBand = getLargeGroupSizeBandLabel();
+    if (!selectedPoints.length) {
+      return `Large-group capture active for ${clusterLabel} (${sizeBand}). Tap one representative map point, then fill composition details.`;
+    }
+    return `Large-group capture active for ${clusterLabel} (${sizeBand}). Representative point selected. Complete composition fields and save.`;
+  }
+
   const readinessMessage = getGroupInteractionReadinessMessage();
   if (readinessMessage) {
     return `Group capture active for ${clusterLabel}. ${readinessMessage}`;
@@ -1075,6 +1263,7 @@ function isCompleteGroupPoint(point) {
   const hasSociodemographics =
     !!point &&
     (point.gender === "male" || point.gender === "female") &&
+    !!normalizeEthnicGroup(point.ethnicGroup) &&
     typeof point.ageGroup === "string" &&
     point.ageGroup.trim().length > 0 &&
     !!normalizeFacialExpression(point.facialExpression);
@@ -1112,6 +1301,15 @@ function setGroupPointSelectedGender(value) {
   groupPointSelectedGender = value === "male" || value === "female" ? value : "";
   groupPointGenderButtons.forEach((button) => {
     const isActive = button.dataset.groupPointGender === groupPointSelectedGender;
+    button.classList.toggle("active", isActive);
+    button.setAttribute("aria-pressed", isActive ? "true" : "false");
+  });
+}
+
+function setGroupPointSelectedEthnicGroup(value) {
+  groupPointSelectedEthnicGroup = normalizeEthnicGroup(value) || "";
+  groupPointEthnicButtons.forEach((button) => {
+    const isActive = normalizeEthnicGroup(button.dataset.groupPointEthnicGroup || "") === groupPointSelectedEthnicGroup;
     button.classList.toggle("active", isActive);
     button.setAttribute("aria-pressed", isActive ? "true" : "false");
   });
@@ -1181,6 +1379,7 @@ function openGroupPointModal(point, index = null) {
     usesSharedGroupActivity ? selectedGroupActivityTypologies : pointDetails.activityTypes || []
   );
   setGroupPointSelectedGender(pointDetails.gender || "");
+  setGroupPointSelectedEthnicGroup(pointDetails.ethnicGroup || "");
   setGroupPointSelectedAgeGroup(pointDetails.ageGroup || "");
   setGroupPointSelectedFacialExpression(pointDetails.facialExpression || "");
   setSavePrompt("", "muted");
@@ -1204,6 +1403,7 @@ function closeGroupPointModal({ discardDraft = false, keepStatus = false } = {})
   groupPointModalState = null;
   setGroupPointSelectedActivityTypes([]);
   setGroupPointSelectedGender("");
+  setGroupPointSelectedEthnicGroup("");
   setGroupPointSelectedAgeGroup("");
   setGroupPointSelectedFacialExpression("");
   setGroupPointModalPrompt("", "muted");
@@ -1244,6 +1444,22 @@ function renderGroupPersonList() {
     return;
   }
 
+  if (isLargeGroupMode()) {
+    const sizeBand = getLargeGroupSizeBandLabel();
+    const [point] = selectedPoints;
+    if (!point) {
+      groupDetailsHint.textContent = `Large group mode (${sizeBand}): tap one representative point.`;
+      groupPersonList.innerHTML = `<p class="group-person-empty">No representative point selected yet.</p>`;
+      return;
+    }
+
+    groupDetailsHint.textContent = `Representative point selected for ${sizeBand}. Complete composition fields below and save.`;
+    groupPersonList.innerHTML = `<p class="group-person-empty">Representative point: ${escapeHtml(point.xPct)}%, ${escapeHtml(
+      point.yPct
+    )}% | Size band: ${escapeHtml(sizeBand)}</p>`;
+    return;
+  }
+
   const readinessMessage = getGroupInteractionReadinessMessage();
   if (readinessMessage) {
     groupDetailsHint.textContent = readinessMessage;
@@ -1264,11 +1480,12 @@ function renderGroupPersonList() {
     .map((point, index) => {
       const activityText = formatActivityType(getGroupPointActivityTypes(point));
       const genderText = formatGender(point.gender);
+      const ethnicText = formatEthnicGroup(point.ethnicGroup);
       const ageText = formatAgeGroup(point.ageGroup);
       const expressionText = formatFacialExpression(point.facialExpression);
       const detailsText = isInteractingGroup()
-        ? `${genderText} | ${ageText} | ${expressionText}`
-        : `${activityText} | ${genderText} | ${ageText} | ${expressionText}`;
+        ? `${genderText} | ${ethnicText} | ${ageText} | ${expressionText}`
+        : `${activityText} | ${genderText} | ${ethnicText} | ${ageText} | ${expressionText}`;
       return `
         <article class="group-person-card">
           <div class="group-person-copy">
@@ -1666,6 +1883,20 @@ function onMapClick(event) {
   };
 
   if (isGroupMode()) {
+    if (isLargeGroupMode()) {
+      selectedPoints = [selectedPoint];
+      draftGroupPoint = null;
+      const sizeBand = getLargeGroupSizeBandLabel();
+      setCollectStatus(
+        `Large-group capture active for ${getCurrentClusterIdLabel()} (${sizeBand}). Representative point selected.`,
+        "active"
+      );
+      updateSelectedCoordsText();
+      renderGroupPersonList();
+      renderMarkers();
+      return;
+    }
+
     draftGroupPoint = selectedPoint;
     openGroupPointModal(selectedPoint);
     setCollectStatus(`Group capture active for ${getCurrentClusterIdLabel()}. Complete member ${selectedPoints.length + 1} in the popup.`, "active");
@@ -1798,6 +2029,10 @@ function onGroupPointFormSubmit(event) {
     setGroupPointModalPrompt("Select gender.", "error");
     return;
   }
+  if (!groupPointSelectedEthnicGroup) {
+    setGroupPointModalPrompt("Select an ethnic group.", "error");
+    return;
+  }
   if (!groupPointSelectedAgeGroup) {
     setGroupPointModalPrompt("Select an age group.", "error");
     return;
@@ -1819,6 +2054,7 @@ function onGroupPointFormSubmit(event) {
     ...sourcePoint,
     activityTypes: isInteractingGroup() ? [...selectedGroupActivityTypologies] : [...groupPointSelectedActivityTypes],
     gender: groupPointSelectedGender,
+    ethnicGroup: groupPointSelectedEthnicGroup,
     ageGroup: groupPointSelectedAgeGroup,
     facialExpression: groupPointSelectedFacialExpression,
   };
@@ -3067,9 +3303,90 @@ async function onLocateViaPoi() {
     return;
   }
 
+  if (picOverlayVisible) {
+    picOverlayVisible = false;
+    setPicOverlayButtonState(false);
+    closePicPreviewModal();
+  }
+
   poiVisible = true;
   setPoiOverlayButtonState(true);
   await refreshPoiOverlayForCurrentFloor({ animate: true, loadingMessage: "Loading POIs for this floor..." });
+}
+
+async function onLocateViaPic() {
+  if (!locateViaPicBtn) {
+    return;
+  }
+
+  if (!currentBuildingId || !currentFloorId) {
+    setLocateStatus("Select a building and floor first.", "warn");
+    return;
+  }
+
+  if (picOverlayVisible) {
+    picOverlayVisible = false;
+    photoRequestToken += 1;
+    setPicOverlayButtonState(false);
+    closePicPreviewModal();
+    renderMarkers();
+    resetLocateStatusToBase();
+    return;
+  }
+
+  if (poiVisible) {
+    poiVisible = false;
+    poiRequestToken += 1;
+    shouldAnimatePois = false;
+    setPoiOverlayButtonState(false);
+  }
+
+  picOverlayVisible = true;
+  setPicOverlayButtonState(true);
+  await refreshPhotoOverlayForCurrentFloor({ loadingMessage: "Loading photos for this floor..." });
+}
+
+async function refreshPhotoOverlayForCurrentFloor({ loadingMessage = "" } = {}) {
+  if (!picOverlayVisible) {
+    renderMarkers();
+    return;
+  }
+
+  if (!currentBuildingId || !currentFloorId) {
+    renderMarkers();
+    return;
+  }
+
+  const buildingId = currentBuildingId;
+  const floorId = currentFloorId;
+  const requestToken = ++photoRequestToken;
+
+  locateViaPicBtn.disabled = true;
+  if (loadingMessage) {
+    setLocateStatus(loadingMessage, "muted");
+  }
+
+  try {
+    await loadPhotoMapsForBuilding(buildingId);
+    if (!picOverlayVisible || requestToken !== photoRequestToken || buildingId !== currentBuildingId || floorId !== currentFloorId) {
+      return;
+    }
+
+    renderMarkers();
+    const status = buildPicOverlayStatus(buildingId, floorId);
+    setLocateStatus(status.message, status.state);
+  } catch (error) {
+    if (requestToken !== photoRequestToken) {
+      return;
+    }
+
+    renderMarkers();
+    setLocateStatus(error?.message || "Could not load photos.", "error");
+  } finally {
+    if (requestToken === photoRequestToken && locateViaPicBtn) {
+      locateViaPicBtn.disabled = false;
+    }
+  }
 }
 
 async function refreshPoiOverlayForCurrentFloor({ animate = false, loadingMessage = "" } = {}) {
@@ -3141,8 +3458,38 @@ async function onFormSubmit(event) {
   activityTime.value = toDateTimeLocalValue(new Date());
 
   if (activeMode === "group") {
+    if (!hasGroupSizeModeChoice()) {
+      alert("Choose small group or large group before continuing.");
+      return;
+    }
+
+    if (isLargeGroupMode()) {
+      const sizeBand = (largeGroupSizeRange?.value || "").trim();
+      const normalizedSizeBand = sizeBand.toLowerCase();
+      const genderComposition = (largeGroupGenderComposition?.value || "").trim().toLowerCase();
+      const ageComposition = (largeGroupAgeComposition?.value || "").trim().toLowerCase();
+      const activityDescription = (largeGroupActivityDescription?.value || "").trim();
+
+      if (!LARGE_GROUP_SIZE_OPTIONS.includes(normalizedSizeBand)) {
+        alert("Select a size band for large group mode.");
+        return;
+      }
+      if (!LARGE_GROUP_GENDER_OPTIONS.includes(genderComposition)) {
+        alert("Select a gender composition for large group mode.");
+        return;
+      }
+      if (!LARGE_GROUP_AGE_OPTIONS.includes(ageComposition)) {
+        alert("Select a general age composition for large group mode.");
+        return;
+      }
+      if (!activityDescription) {
+        alert("Enter a free-text description of the ongoing activity.");
+        return;
+      }
+    }
+
     const readinessMessage = getGroupInteractionReadinessMessage();
-    if (readinessMessage) {
+    if (readinessMessage && !isLargeGroupMode()) {
       alert(readinessMessage);
       return;
     }
@@ -3185,7 +3532,7 @@ async function onFormSubmit(event) {
     }
   }
 
-  const requiredPointCount = activeMode === "group" ? groupCount : 1;
+  const requiredPointCount = activeMode === "group" ? (isLargeGroupMode() ? 1 : groupCount) : 1;
   if (selectedPoints.length !== requiredPointCount) {
     alert(
       `Please complete ${requiredPointCount} point${requiredPointCount === 1 ? "" : "s"} before saving the ${
@@ -3198,11 +3545,11 @@ async function onFormSubmit(event) {
     alert("Please save or cancel the open member popup before saving the group.");
     return;
   }
-  if (activeMode === "group" && selectedPoints.some((point) => !isCompleteGroupPoint(point))) {
+  if (activeMode === "group" && !isLargeGroupMode() && selectedPoints.some((point) => !isCompleteGroupPoint(point))) {
     alert(
       isInteractingGroup()
-        ? "Each group member needs gender, age group, and facial expression before you can save the group."
-        : "Each group member needs activity type, gender, age group, and facial expression before you can save the group."
+        ? "Each group member needs gender, ethnic group, age group, and facial expression before you can save the group."
+        : "Each group member needs activity type, gender, ethnic group, age group, and facial expression before you can save the group."
     );
     return;
   }
@@ -3224,17 +3571,31 @@ async function onFormSubmit(event) {
 
   try {
     if (activeMode === "group") {
-      const payloads = selectedPoints.map((point, index) =>
-        buildRecordPayload(point, buildAutoActorId(currentClusterNumber, index + 1), fallbackActivityTime, {
-          activityTypes: getGroupPointActivityTypes(point),
-          gender: point.gender,
-          ageGroup: point.ageGroup,
-          facialExpression: point.facialExpression,
-        })
-      );
+      const payloads = isLargeGroupMode()
+        ? null
+        : selectedPoints.map((point, index) =>
+            buildRecordPayload(point, buildAutoActorId(currentClusterNumber, index + 1), fallbackActivityTime, {
+              activityTypes: getGroupPointActivityTypes(point),
+              gender: point.gender,
+              ethnicGroup: point.ethnicGroup,
+              ageGroup: point.ageGroup,
+              facialExpression: point.facialExpression,
+            })
+          );
       const response = await apiRequest(API_RECORDS, {
         method: "POST",
-        body: buildRequestBodyWithOptionalPhoto({ records: payloads }, selectedPhotoFile),
+        body: buildRequestBodyWithOptionalPhoto(
+          isLargeGroupMode()
+            ? {
+                largeGroupRecord: buildLargeGroupPayload(
+                  selectedPoints[0],
+                  buildAutoActorId(currentClusterNumber, 1),
+                  fallbackActivityTime
+                ),
+              }
+            : { records: payloads },
+          selectedPhotoFile
+        ),
       });
 
       if (!response.ok) {
@@ -3242,9 +3603,9 @@ async function onFormSubmit(event) {
       }
 
       const data = await response.json();
-      const createdRecords = Array.isArray(data.records)
-        ? data.records.map((record) => normalizeRecord(record)).filter((record) => record !== null)
-        : [];
+      const createdRecords = (Array.isArray(data.records) ? data.records : data.record ? [data.record] : [])
+        .map((record) => normalizeRecord(record))
+        .filter((record) => record !== null);
       if (!createdRecords.length) {
         throw new Error("Server did not return the created group records.");
       }
@@ -3253,8 +3614,10 @@ async function onFormSubmit(event) {
       lastGeneratedClusterNumber = Math.max(lastGeneratedClusterNumber, getMaxKnownClusterNumber(createdRecords));
       latestSavedRecordIds = createdRecords.map((record) => record.id).filter(Boolean);
       const savedClusterLabel = getSharedClusterLabel(createdRecords) || getCurrentClusterIdLabel();
-      setSavePrompt(`Saved ${savedClusterLabel} with ${createdRecords.length} records.`, "success");
-      finishCollection(`${savedClusterLabel} saved with ${createdRecords.length} records. Select Individual or Group for the next capture.`);
+      setSavePrompt(`Saved ${savedClusterLabel} with ${createdRecords.length} record${createdRecords.length === 1 ? "" : "s"}.`, "success");
+      finishCollection(
+        `${savedClusterLabel} saved with ${createdRecords.length} record${createdRecords.length === 1 ? "" : "s"}. Select Individual or Group for the next capture.`
+      );
     } else {
       const response = await apiRequest(API_RECORDS, {
         method: "POST",
@@ -3295,6 +3658,8 @@ function buildRecordPayload(point, actorIdValue, fallbackActivityTime, overrides
   const nextEthnicGroup = normalizeEthnicGroup(overrides.ethnicGroup ?? selectedEthnicGroup) || "";
   const nextAgeGroup = typeof overrides.ageGroup === "string" ? overrides.ageGroup.trim() : ageGroup.value.trim();
   const nextFacialExpression = normalizeFacialExpression(overrides.facialExpression ?? selectedFacialExpression) || "";
+  const nextNotes =
+    typeof overrides.notes === "string" ? overrides.notes.trim() : notes?.value.trim() || "";
   return {
     buildingId: currentBuildingId,
     floorId: currentFloorId,
@@ -3305,11 +3670,37 @@ function buildRecordPayload(point, actorIdValue, fallbackActivityTime, overrides
     ageGroup: nextAgeGroup,
     facialExpression: nextFacialExpression,
     activityTime: safeActivityTime,
+    notes: nextNotes,
+    location: point ? { xPct: point.xPct, yPct: point.yPct } : null,
+    photoName: selectedPhotoName || selectedPhotoFile?.name || null,
+    photoLocation: selectedPhotoLocation ? { ...selectedPhotoLocation } : null,
+  };
+}
+
+function buildLargeGroupPayload(point, actorIdValue, fallbackActivityTime) {
+  const safeActivityTime = point?.timestampIso || fallbackActivityTime;
+  return {
+    buildingId: currentBuildingId,
+    floorId: currentFloorId,
+    actorId: actorIdValue,
+    sizeBand: (largeGroupSizeRange?.value || "").trim(),
+    genderComposition: (largeGroupGenderComposition?.value || "").trim().toLowerCase(),
+    ageComposition: (largeGroupAgeComposition?.value || "").trim().toLowerCase(),
+    activityDescription: (largeGroupActivityDescription?.value || "").trim(),
+    activityTime: safeActivityTime,
     notes: notes?.value.trim() || "",
     location: point ? { xPct: point.xPct, yPct: point.yPct } : null,
     photoName: selectedPhotoName || selectedPhotoFile?.name || null,
     photoLocation: selectedPhotoLocation ? { ...selectedPhotoLocation } : null,
   };
+}
+
+function getLargeGroupSizeBandLabel() {
+  const selectedRaw = (largeGroupSizeRange?.value || "").trim();
+  if (!LARGE_GROUP_SIZE_OPTIONS.includes(selectedRaw.toLowerCase())) {
+    return "size band not selected";
+  }
+  return selectedRaw;
 }
 
 async function onExport() {
@@ -3372,6 +3763,16 @@ function resetForm(resetDateTime = true, advanceActorId = false) {
   setSelectedFacialExpression("");
   setGroupInteractionMode("", { resetPoints: false, keepStatus: true });
   setSelectedGroupActivityTypologies([], { syncPoints: false, keepStatus: true });
+  setLargeGroupMode(previousRecordMode === "group" ? null : false, { keepStatus: true });
+  if (largeGroupGenderComposition) {
+    largeGroupGenderComposition.value = "";
+  }
+  if (largeGroupAgeComposition) {
+    largeGroupAgeComposition.value = "";
+  }
+  if (largeGroupActivityDescription) {
+    largeGroupActivityDescription.value = "";
+  }
   selectedPhotoFile = null;
   selectedPhotoLocation = null;
   selectedPhotoName = "";
@@ -3397,6 +3798,7 @@ function resetForm(resetDateTime = true, advanceActorId = false) {
   }
   closeGroupPointModal({ discardDraft: true, keepStatus: true });
   setRecordMode(previousRecordMode);
+  syncLargeGroupModeUI();
   updateSelectedCoordsText();
   renderMarkers();
 }
@@ -3428,7 +3830,7 @@ async function deleteRecord(id) {
 
 function renderMarkers() {
   const overlayHost = mapCanvas || mapWrap;
-  overlayHost.querySelectorAll(".marker, .cluster-link, .poi-marker").forEach((node) => node.remove());
+  overlayHost.querySelectorAll(".marker, .cluster-link, .poi-marker, .pic-marker").forEach((node) => node.remove());
 
   const visibleRecords = records.filter((record) => {
     const recordBuildingId = getRecordBuildingId(record);
@@ -3452,6 +3854,9 @@ function renderMarkers() {
 
   if (poiVisible) {
     renderPoiMarkers();
+  }
+  if (picOverlayVisible) {
+    renderPicOverlayMarkers();
   }
 
   if (selectedPoints.length || draftGroupPoint) {
@@ -3678,6 +4083,127 @@ function createPoiMarker(point, index, animate) {
   overlayHost.appendChild(marker);
 }
 
+function renderPicOverlayMarkers() {
+  if (!currentBuildingId || !currentFloorId || !photoMapsCache.has(currentBuildingId)) {
+    return;
+  }
+
+  const picPoints = getPhotoPointsForFloor(currentBuildingId, currentFloorId);
+  if (!picPoints.length) {
+    return;
+  }
+
+  picPoints.forEach((point, index) => {
+    createPicOverlayMarker(point, index);
+  });
+}
+
+function createPicOverlayMarker(point, index) {
+  const overlayHost = mapCanvas || mapWrap;
+  if (!overlayHost || !point || !Number.isFinite(point.xPct) || !Number.isFinite(point.yPct)) {
+    return;
+  }
+
+  const marker = document.createElement("button");
+  marker.type = "button";
+  marker.className = "pic-marker";
+  marker.style.left = `${point.xPct}%`;
+  marker.style.top = `${point.yPct}%`;
+  marker.style.setProperty("--pic-delay", `${Math.min(index * 70, 420)}ms`);
+  marker.setAttribute("aria-label", `Open image preview for ${point.name}`);
+  marker.title = `Open image: ${point.name}`;
+  marker.addEventListener("click", (event) => {
+    event.stopPropagation();
+    openPicPreviewModal(point);
+  });
+
+  const node = document.createElement("span");
+  node.className = "pic-node";
+
+  const label = document.createElement("span");
+  label.className = "pic-label";
+  label.textContent = point.name;
+
+  marker.appendChild(node);
+  marker.appendChild(label);
+  overlayHost.appendChild(marker);
+}
+
+function buildPicOverlayStatus(buildingId, floorId) {
+  const photoMaps = photoMapsCache.get(buildingId);
+  const floorLabel = getFloorLabel(buildingId, floorId);
+
+  if (photoMaps === null) {
+    return {
+      message: `No photos.json found for ${getBuildingLabel(buildingId)}.`,
+      state: "warn",
+    };
+  }
+
+  const points = getPhotoPointsForFloorFromMaps(photoMaps, floorId);
+  if (!points.length) {
+    return {
+      message: `No image points defined for ${floorLabel}.`,
+      state: "warn",
+    };
+  }
+
+  return {
+    message: `Showing ${points.length} image point${points.length === 1 ? "" : "s"} on ${floorLabel}. Tap a point to open the photo preview.`,
+    state: "success",
+  };
+}
+
+function openPicPreviewModal(point) {
+  if (!picPreviewModal || !picPreviewFrame || !point || !point.imageUrl) {
+    return;
+  }
+
+  if (picPreviewModalCoords) {
+    picPreviewModalCoords.textContent = `Point ${round2(point.xPct)}%, ${round2(point.yPct)}%`;
+  }
+
+  picPreviewFrame.src = buildPicPreviewIframeUrl(point);
+  picPreviewModal.hidden = false;
+  picPreviewModal.setAttribute("aria-hidden", "false");
+}
+
+function buildPicPreviewIframeUrl(point) {
+  const params = new URLSearchParams();
+  params.set("original", getEmbeddableImageUrl(point.imageUrl));
+
+  return `${PIC_VIEWER_TEMPLATE_URL}?${params.toString()}`;
+}
+
+function getEmbeddableImageUrl(url) {
+  if (!isAbsoluteHttpUrl(url)) {
+    return url;
+  }
+
+  return `${API_ASSET_IMAGE}?url=${encodeURIComponent(url)}`;
+}
+
+function closePicPreviewModal() {
+  if (!picPreviewModal || !picPreviewFrame) {
+    return;
+  }
+
+  picPreviewModal.hidden = true;
+  picPreviewModal.setAttribute("aria-hidden", "true");
+  picPreviewFrame.src = "about:blank";
+}
+
+function onPicPreviewModalClick(event) {
+  const target = event.target;
+  if (!(target instanceof HTMLElement)) {
+    return;
+  }
+
+  if (target.hasAttribute("data-pic-preview-close")) {
+    closePicPreviewModal();
+  }
+}
+
 function renderRecords() {
   if (!recordsTbody) {
     return;
@@ -3706,6 +4232,8 @@ function renderRecords() {
         formatEthnicGroup(record.ethnicGroup),
         formatAgeGroup(record.ageGroup),
         formatFacialExpression(record.facialExpression),
+        record.sizeBand,
+        record.activityDescription,
         record.notes,
         getBuildingLabel(recordBuildingId),
         getFloorLabel(recordBuildingId, recordFloorId),
@@ -3746,7 +4274,7 @@ function renderRecords() {
       <td>${escapeHtml(formatMapLocation(record.location))}</td>
       <td>${formatPhotoPreviewCell(record.photoUrl, record.photoPreview, record.photoName)}</td>
       <td>${escapeHtml(formatPhotoLocationText(record.photoLocation, record.photoName))}</td>
-      <td>${escapeHtml(record.notes || "-")}</td>
+      <td>${escapeHtml(formatRecordNotes(record))}</td>
       <td><button type="button" class="danger" data-delete-id="${record.id}">Delete</button></td>
     `;
     recordsTbody.appendChild(tr);
@@ -3778,10 +4306,18 @@ function normalizeRecord(record) {
     buildingId: typeof record.buildingId === "string" && record.buildingId.trim() ? record.buildingId : null,
     floorId: typeof record.floorId === "string" && record.floorId.trim() ? record.floorId : null,
     activityType: normalizeActivityTypeValue(record.activityType),
+    recordType: typeof record.recordType === "string" && record.recordType.trim() ? record.recordType.trim() : "activity",
     gender: normalizeGender(record.gender),
+    genderComposition: normalizeGender(record.genderComposition),
     ethnicGroup: normalizeEthnicGroup(record.ethnicGroup),
     ageGroup: normalizeAgeGroup(record.ageGroup),
+    ageComposition: normalizeAgeGroup(record.ageComposition),
     facialExpression: normalizeFacialExpression(record.facialExpression),
+    sizeBand: typeof record.sizeBand === "string" && record.sizeBand.trim() ? record.sizeBand.trim() : null,
+    activityDescription:
+      typeof record.activityDescription === "string" && record.activityDescription.trim()
+        ? record.activityDescription.trim()
+        : null,
     location: hasMapLocation(record.location) ? { ...record.location } : null,
     photoLocation: isValidPhotoLocation(record.photoLocation) ? { ...record.photoLocation } : null,
     photoName: typeof record.photoName === "string" && record.photoName.trim() ? record.photoName : null,
@@ -3954,6 +4490,13 @@ function formatGender(gender) {
   if (gender === "female") {
     return "Female";
   }
+  if (typeof gender === "string" && gender.trim()) {
+    return gender
+      .trim()
+      .split(" ")
+      .map((part) => (part ? part[0].toUpperCase() + part.slice(1) : part))
+      .join(" ");
+  }
   return "-";
 }
 
@@ -3988,6 +4531,19 @@ function formatAgeGroup(value) {
 function formatFacialExpression(value) {
   const normalized = normalizeFacialExpression(value);
   return normalized ? FACIAL_EXPRESSION_LABELS[normalized] : "-";
+}
+
+function formatRecordNotes(record) {
+  if (record?.recordType !== "largeGroup") {
+    return record?.notes || "-";
+  }
+
+  const parts = [
+    record.sizeBand ? `Size: ${record.sizeBand}` : "",
+    record.activityDescription ? `Activity: ${record.activityDescription}` : "",
+    record.notes || "",
+  ].filter(Boolean);
+  return parts.length ? parts.join(" | ") : "-";
 }
 
 function normalizeActivityTypeValue(value) {
@@ -4043,10 +4599,13 @@ function normalizeActivityTypeLabel(value) {
 }
 
 function normalizeGender(value) {
-  if (value === "male" || value === "female") {
-    return value;
+  if (typeof value !== "string") {
+    return null;
   }
-  return null;
+
+  const normalized = value.trim().toLowerCase();
+  const allowedValues = ["male", "female", ...LARGE_GROUP_GENDER_OPTIONS];
+  return allowedValues.includes(normalized) ? normalized : null;
 }
 
 function normalizeEthnicGroup(value) {
@@ -4206,6 +4765,18 @@ function buildLocateStatusMessage(locationPoint) {
 }
 
 function resetLocateStatusToBase() {
+  if (picOverlayVisible) {
+    const status = buildPicOverlayStatus(currentBuildingId, currentFloorId);
+    setLocateStatus(status.message, status.state);
+    return;
+  }
+
+  if (poiVisible) {
+    const status = buildPoiOverlayStatus(currentBuildingId, currentFloorId);
+    setLocateStatus(status.message, status.state);
+    return;
+  }
+
   if (userLocationPoint) {
     setLocateStatus(buildLocateStatusMessage(userLocationPoint), "success");
     return;
@@ -4221,6 +4792,15 @@ function setPoiOverlayButtonState(active) {
 
   locateViaPoiBtn.classList.toggle("is-active", !!active);
   locateViaPoiBtn.setAttribute("aria-pressed", String(!!active));
+}
+
+function setPicOverlayButtonState(active) {
+  if (!locateViaPicBtn) {
+    return;
+  }
+
+  locateViaPicBtn.classList.toggle("is-active", !!active);
+  locateViaPicBtn.setAttribute("aria-pressed", String(!!active));
 }
 
 function setPoiLoadingState(loading) {
@@ -4266,6 +4846,19 @@ function getPoiAssetUrl(buildingId) {
   }
 
   return buildAssetUrl(`${buildingId}/poi.json`);
+}
+
+function getPhotoAssetUrl(buildingId) {
+  const building = buildingMaps[buildingId];
+  if (building && typeof building.photosSrc === "string" && building.photosSrc.trim()) {
+    return building.photosSrc.trim();
+  }
+
+  if (buildingId === ROOT_BUILDING_ID) {
+    return buildAssetUrl("photos.json");
+  }
+
+  return buildAssetUrl(`${buildingId}/photos.json`);
 }
 
 function buildAssetUrl(relativePath) {
@@ -4357,6 +4950,72 @@ async function loadPoiMapsForBuilding(buildingId) {
   return loadPromise;
 }
 
+async function loadPhotoMapsForBuilding(buildingId) {
+  if (!buildingId) {
+    return null;
+  }
+
+  if (photoMapsCache.has(buildingId)) {
+    return photoMapsCache.get(buildingId);
+  }
+
+  if (photoLoadPromises.has(buildingId)) {
+    return photoLoadPromises.get(buildingId);
+  }
+
+  const loadPromise = (async () => {
+    const photoAssetUrl = getPhotoAssetUrl(buildingId);
+    const response = await fetchPhotoAssetJson(photoAssetUrl);
+
+    if (response.status === 404) {
+      photoMapsCache.set(buildingId, null);
+      return null;
+    }
+
+    if (!response.ok) {
+      throw new Error(`Could not load photos for ${getBuildingLabel(buildingId)} from ${photoAssetUrl}.`);
+    }
+
+    const payload = await response.json().catch(() => {
+      throw new Error(`Photo data for ${getBuildingLabel(buildingId)} is not valid JSON.`);
+    });
+    const normalized = normalizePhotoMaps(payload);
+    photoMapsCache.set(buildingId, normalized);
+    return normalized;
+  })().finally(() => {
+    photoLoadPromises.delete(buildingId);
+  });
+
+  photoLoadPromises.set(buildingId, loadPromise);
+  return loadPromise;
+}
+
+async function fetchPhotoAssetJson(photoAssetUrl) {
+  try {
+    return await fetch(photoAssetUrl, {
+      headers: { Accept: "application/json" },
+    });
+  } catch (error) {
+    if (!isAbsoluteHttpUrl(photoAssetUrl)) {
+      throw error;
+    }
+
+    const proxyUrl = `${API_ASSET_JSON}?url=${encodeURIComponent(photoAssetUrl)}`;
+    return fetch(proxyUrl, {
+      credentials: "same-origin",
+      headers: { Accept: "application/json" },
+    });
+  }
+}
+
+function isAbsoluteHttpUrl(value) {
+  if (typeof value !== "string") {
+    return false;
+  }
+
+  return /^https?:\/\//i.test(value.trim());
+}
+
 function normalizePoiMaps(rawMaps) {
   if (!rawMaps || typeof rawMaps !== "object" || Array.isArray(rawMaps)) {
     return {};
@@ -4427,8 +5086,91 @@ function normalizePoiPoint(rawPoint) {
   };
 }
 
+function normalizePhotoMaps(rawMaps) {
+  if (!rawMaps || typeof rawMaps !== "object" || Array.isArray(rawMaps)) {
+    return {};
+  }
+
+  const floorSource =
+    rawMaps.floors && typeof rawMaps.floors === "object" && !Array.isArray(rawMaps.floors) ? rawMaps.floors : rawMaps;
+
+  const normalized = {};
+  Object.entries(floorSource).forEach(([rawFloorId, floorPayload]) => {
+    const photoPoints = normalizePhotoFloorPoints(floorPayload);
+    if (!photoPoints.length) {
+      return;
+    }
+
+    normalized[String(rawFloorId)] = photoPoints;
+  });
+
+  return normalized;
+}
+
+function normalizePhotoFloorPoints(floorPayload) {
+  if (Array.isArray(floorPayload)) {
+    return floorPayload.map(normalizePhotoPoint).filter((point) => point !== null);
+  }
+
+  if (!floorPayload || typeof floorPayload !== "object") {
+    return [];
+  }
+
+  const pointKeys = ["referencePoints", "points", "photos"];
+  for (const key of pointKeys) {
+    const rawPoints = floorPayload[key];
+    if (!Array.isArray(rawPoints)) {
+      continue;
+    }
+
+    return rawPoints.map(normalizePhotoPoint).filter((point) => point !== null);
+  }
+
+  return [];
+}
+
+function normalizePhotoPoint(rawPoint) {
+  if (!rawPoint || typeof rawPoint !== "object") {
+    return null;
+  }
+
+  const xPct = Number(rawPoint.xPct ?? rawPoint.x ?? rawPoint.xPercent);
+  const yPct = Number(rawPoint.yPct ?? rawPoint.y ?? rawPoint.yPercent);
+  const imageUrlSource =
+    typeof rawPoint.imageUrl === "string" && rawPoint.imageUrl.trim()
+      ? rawPoint.imageUrl
+      : typeof rawPoint.url === "string" && rawPoint.url.trim()
+        ? rawPoint.url
+        : typeof rawPoint.photoUrl === "string" && rawPoint.photoUrl.trim()
+          ? rawPoint.photoUrl
+          : "";
+  const nameSource =
+    typeof rawPoint.name === "string" && rawPoint.name.trim()
+      ? rawPoint.name
+      : typeof rawPoint.label === "string" && rawPoint.label.trim()
+        ? rawPoint.label
+        : typeof rawPoint.title === "string" && rawPoint.title.trim()
+          ? rawPoint.title
+          : "Photo point";
+
+  if (!Number.isFinite(xPct) || !Number.isFinite(yPct) || !imageUrlSource) {
+    return null;
+  }
+
+  return {
+    xPct: clampPercent(xPct),
+    yPct: clampPercent(yPct),
+    name: nameSource.trim(),
+    imageUrl: imageUrlSource.trim(),
+  };
+}
+
 function getPoiPointsForFloor(buildingId, floorId) {
   return getPoiPointsForFloorFromMaps(poiMapsCache.get(buildingId), floorId);
+}
+
+function getPhotoPointsForFloor(buildingId, floorId) {
+  return getPhotoPointsForFloorFromMaps(photoMapsCache.get(buildingId), floorId);
 }
 
 function getPoiPointsForFloorFromMaps(poiMaps, floorId) {
@@ -4442,6 +5184,32 @@ function getPoiPointsForFloorFromMaps(poiMaps, floorId) {
 
   const loweredFloorId = String(floorId).toLowerCase();
   for (const [candidateFloorId, points] of Object.entries(poiMaps)) {
+    if (String(candidateFloorId).toLowerCase() === loweredFloorId && Array.isArray(points)) {
+      return points;
+    }
+  }
+
+  return [];
+}
+
+function getPhotoPointsForFloorFromMaps(photoMaps, floorId) {
+  if (!photoMaps || typeof photoMaps !== "object" || !floorId) {
+    return [];
+  }
+
+  if (Array.isArray(photoMaps[floorId])) {
+    return photoMaps[floorId];
+  }
+
+  const sharedFloorKeys = ["all", "*", "__all__"];
+  for (const sharedKey of sharedFloorKeys) {
+    if (Array.isArray(photoMaps[sharedKey])) {
+      return photoMaps[sharedKey];
+    }
+  }
+
+  const loweredFloorId = String(floorId).toLowerCase();
+  for (const [candidateFloorId, points] of Object.entries(photoMaps)) {
     if (String(candidateFloorId).toLowerCase() === loweredFloorId && Array.isArray(points)) {
       return points;
     }

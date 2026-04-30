@@ -119,7 +119,8 @@ ASGI_APPLICATION = "indoor_collector.asgi.application"
 
 DB_ENGINE = env_str("DJANGO_DB_ENGINE", "sqlite").lower()
 db_options = build_db_options()
-if env_str("LOCAL_TEST", False):
+LOCAL_TEST_MODE = env_bool("LOCAL_TEST", False)
+if LOCAL_TEST_MODE:
   DATABASES = {
     "default": {
       "ENGINE": "django.db.backends.postgresql",
@@ -256,6 +257,10 @@ STORAGES = {
 ASSETS_DIR = BASE_DIR / "assets"
 ASSETS_BASE_URL = env_str("DJANGO_ASSETS_BASE_URL", "")
 BUILDINGS_MANIFEST_URL = env_str("DJANGO_BUILDINGS_MANIFEST_URL", "")
+if LOCAL_TEST_MODE and not ASSETS_BASE_URL:
+  ASSETS_BASE_URL = "https://hubhumanactivities.blob.core.windows.net/assets"
+if LOCAL_TEST_MODE and not BUILDINGS_MANIFEST_URL and ASSETS_BASE_URL:
+  BUILDINGS_MANIFEST_URL = f"{ASSETS_BASE_URL.rstrip('/')}/buildings.manifest.json"
 BUILDINGS_MANIFEST_TIMEOUT_SECS = env_int("DJANGO_BUILDINGS_MANIFEST_TIMEOUT_SECS", 10)
 SYNC_BUILDINGS_ON_MIGRATE = env_bool("DJANGO_SYNC_BUILDINGS_ON_MIGRATE", True)
 

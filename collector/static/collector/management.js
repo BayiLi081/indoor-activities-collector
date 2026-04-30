@@ -312,6 +312,10 @@ function getFilteredRecords() {
         formatEthnicGroup(record.ethnicGroup),
         formatAgeGroup(record.ageGroup),
         formatFacialExpression(record.facialExpression),
+        record.sizeBand,
+        record.genderComposition,
+        record.ageComposition,
+        record.activityDescription,
         record.notes,
         getBuildingLabel(recordBuildingId),
         getFloorLabel(recordBuildingId, recordFloorId),
@@ -602,6 +606,9 @@ function createMarker(record, options = {}) {
 function getMarkerTitle(record, clusterSize = 0) {
   const actorLabel = record?.actorId || "Record";
   const activityLabel = formatActivityType(record?.activityType);
+  if (record?.recordType === "largeGroup") {
+    return `${actorLabel} | Large group | ${formatSizeBand(record.sizeBand)}`;
+  }
   if (clusterSize > 1) {
     return `${actorLabel} | ${activityLabel} | Click point for this person, or line for the group`;
   }
@@ -761,6 +768,25 @@ function hideMapPopup() {
 }
 
 function renderRecordPopupBody(record, clusterSize = 0) {
+  if (record?.recordType === "largeGroup") {
+    const items = [
+      ["Record Type", "Large Group"],
+      ["Group ID", record.actorId || "-"],
+      ["Size Band", formatSizeBand(record.sizeBand)],
+      ["Gender Composition", formatGender(record.genderComposition || record.gender)],
+      ["Age Composition", formatAgeGroup(record.ageComposition || record.ageGroup)],
+      ["Activity Description", record.activityDescription || "-"],
+      ["Time", formatDate(record.activityTime)],
+      ["Building", getBuildingLabel(getRecordBuildingId(record))],
+      ["Floor", getFloorLabel(getRecordBuildingId(record), getRecordFloorId(record, getRecordBuildingId(record)))],
+      ["Map Point", formatMapLocation(record.location)],
+      ["Photo GPS", formatPhotoLocationText(record.photoLocation, record.photoName)],
+      ["Notes", record.notes || "-"],
+    ];
+
+    return renderPopupGrid(items);
+  }
+
   const parsedActor = parseAutoActorId(record.actorId);
   const groupText =
     parsedActor && clusterSize > 1
@@ -1106,7 +1132,7 @@ function renderRecords() {
 
   if (!filtered.length) {
     const tr = document.createElement("tr");
-    tr.innerHTML = `<td colspan="14">No records match the current filters.</td>`;
+    tr.innerHTML = `<td colspan="16">No records match the current filters.</td>`;
     recordsTbody.appendChild(tr);
     return;
   }
@@ -1120,10 +1146,12 @@ function renderRecords() {
       <td>${formatDate(record.activityTime)}</td>
       <td>${escapeHtml(formatActivityType(record.activityType))}</td>
       <td>${escapeHtml(record.actorId || "-")}</td>
+      <td>${escapeHtml(formatSizeBand(record.sizeBand))}</td>
       <td>${escapeHtml(formatGender(record.gender))}</td>
       <td>${escapeHtml(formatEthnicGroup(record.ethnicGroup))}</td>
       <td>${escapeHtml(formatAgeGroup(record.ageGroup))}</td>
       <td>${escapeHtml(formatFacialExpression(record.facialExpression))}</td>
+      <td>${escapeHtml(record.activityDescription || "-")}</td>
       <td>${escapeHtml(getBuildingLabel(recordBuildingId))}</td>
       <td>${escapeHtml(getFloorLabel(recordBuildingId, recordFloorId))}</td>
       <td>${escapeHtml(formatMapLocation(record.location))}</td>
@@ -1332,13 +1360,21 @@ function normalizeRecord(record) {
 
   return {
     ...record,
+    recordType: typeof record.recordType === "string" && record.recordType.trim() ? record.recordType.trim() : "activity",
     buildingId: typeof record.buildingId === "string" && record.buildingId.trim() ? record.buildingId : null,
     floorId: typeof record.floorId === "string" && record.floorId.trim() ? record.floorId : null,
     activityType: normalizeActivityTypeValue(record.activityType),
     gender: normalizeGender(record.gender),
+    genderComposition: normalizeGender(record.genderComposition),
     ethnicGroup: normalizeEthnicGroup(record.ethnicGroup),
     ageGroup: normalizeAgeGroup(record.ageGroup),
+    ageComposition: normalizeAgeGroup(record.ageComposition),
     facialExpression: normalizeFacialExpression(record.facialExpression),
+    sizeBand: typeof record.sizeBand === "string" && record.sizeBand.trim() ? record.sizeBand.trim() : null,
+    activityDescription:
+      typeof record.activityDescription === "string" && record.activityDescription.trim()
+        ? record.activityDescription.trim()
+        : null,
     location: hasMapLocation(record.location) ? { ...record.location } : null,
     photoLocation: isValidPhotoLocation(record.photoLocation) ? { ...record.photoLocation } : null,
     photoName: typeof record.photoName === "string" && record.photoName.trim() ? record.photoName : null,
@@ -1620,6 +1656,9 @@ function formatGender(gender) {
   if (gender === "female") {
     return "Female";
   }
+  if (typeof gender === "string" && gender.trim()) {
+    return toTitleCase(gender);
+  }
   return "-";
 }
 
@@ -1651,9 +1690,21 @@ function formatAgeGroup(value) {
   return typeof value === "string" && value.trim() ? value.trim() : "-";
 }
 
+function formatSizeBand(value) {
+  return typeof value === "string" && value.trim() ? value.trim() : "-";
+}
+
 function formatFacialExpression(value) {
   const normalized = normalizeFacialExpression(value);
   return normalized ? FACIAL_EXPRESSION_LABELS[normalized] : "-";
+}
+
+function toTitleCase(value) {
+  return String(value)
+    .trim()
+    .split(" ")
+    .map((part) => (part ? part[0].toUpperCase() + part.slice(1) : part))
+    .join(" ");
 }
 
 function normalizeActivityTypeValue(value) {
@@ -1709,10 +1760,13 @@ function normalizeActivityTypeLabel(value) {
 }
 
 function normalizeGender(value) {
-  if (value === "male" || value === "female") {
-    return value;
+  if (typeof value !== "string") {
+    return null;
   }
-  return null;
+
+  const normalized = value.trim().toLowerCase();
+  const allowedValues = ["male", "female", "only male", "majority male", "half-half", "majority female", "only female"];
+  return allowedValues.includes(normalized) ? normalized : null;
 }
 
 function normalizeEthnicGroup(value) {

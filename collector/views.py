@@ -1,5 +1,7 @@
 import json
 import re
+from urllib import error as urlerror
+from urllib import request as urlrequest
 from datetime import datetime, timezone as datetime_timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -25,7 +27,7 @@ from .activity_catalog import (
   INDIVIDUAL_ACTIVITY_TYPE_OPTIONS,
   build_activity_catalog_payload,
 )
-from .asset_urls import get_effective_assets_base_url
+from .asset_urls import fetch_json_from_url, get_effective_assets_base_url, is_absolute_http_url
 from .building_catalog import discover_building_maps as discover_building_maps_catalog
 from .floorplan_svg import convert_jpg_floorplan_to_svg, should_regenerate_jpg_wrapper
 from .locate_via_gps import GPSMappingError, get_floor_heading_offset, locate_map_point_from_gps
@@ -36,7 +38,7 @@ from .management_auth import (
   management_access_required,
   validate_management_access_code,
 )
-from .models import ActivityIdSequence, ActivityRecord, PersonQuestionnaireResponse, SiteObservation
+from .models import ActivityIdSequence, ActivityRecord, LargeGroupRecord, PersonQuestionnaireResponse, SiteObservation
 from .object_storage import build_image_object_url, delete_image_object, save_uploaded_image_object
 
 ROOT_BUILDING_ID = "__root__"
@@ -64,12 +66,27 @@ PERSON_QUESTIONNAIRE_ALLOWED_CHOICES = {
   "socialInteraction": {choice[0] for choice in PersonQuestionnaireResponse.SOCIAL_INTERACTION_CHOICES},
 }
 ALLOWED_GENDERS = {"male", "female"}
+ALLOWED_LARGE_GROUP_GENDER_COMPOSITIONS = {
+  "only male",
+  "majority male",
+  "half-half",
+  "majority female",
+  "only female",
+}
 ALLOWED_AGE_GROUPS = {
   "<10 years old",
   "10-20 years old",
   "20-60 years old",
   ">60 years old",
 }
+ALLOWED_LARGE_GROUP_AGE_COMPOSITIONS = {
+  "only young people",
+  "majority young people",
+  "all age group",
+  "majority elderly",
+  "only elderly",
+}
+ALLOWED_LARGE_GROUP_SIZE_BANDS = {"9-20 people", "20-50 people", "50-100 people", "more than 100 people"}
 ALLOWED_ETHNIC_GROUPS = {"Chinese", "Malay", "Indian", "Others"}
 ALLOWED_FACIAL_EXPRESSIONS = {"happy", "no_expression", "unhappy"}
 FACIAL_EXPRESSION_ALIASES = {
@@ -90,6 +107,7 @@ MAP_EXTENSION_PRIORITY = {
   ".jpg": 3,
   ".jpeg": 4,
 }
+MAX_REMOTE_IMAGE_BYTES = 40 * 1024 * 1024
 
 
 @ensure_csrf_cookie
@@ -159,6 +177,58 @@ def api_buildings(request: HttpRequest) -> JsonResponse:
 
 
 @require_http_methods(["GET"])
+def api_asset_json(request: HttpRequest) -> JsonResponse:
+  url = request.GET.get("url", "").strip()
+  if not url:
+    return JsonResponse({"error": "url query parameter is required."}, status=400)
+
+  if not is_absolute_http_url(url):
+    return JsonResponse({"error": "Only absolute http/https URLs are allowed."}, status=400)
+
+  timeout_secs = getattr(settings, "BUILDINGS_MANIFEST_TIMEOUT_SECS", 10)
+  payload = fetch_json_from_url(url, timeout=timeout_secs, label="asset json")
+  if payload is None:
+    return JsonResponse({"error": "Could not fetch remote JSON from the provided URL."}, status=502)
+
+  if not isinstance(payload, (dict, list)):
+    return JsonResponse({"error": "Remote payload is not valid JSON content."}, status=502)
+
+  return JsonResponse(payload, safe=isinstance(payload, dict))
+
+
+@require_http_methods(["GET"])
+def api_asset_image(request: HttpRequest) -> HttpResponse:
+  url = request.GET.get("url", "").strip()
+  if not url:
+    return JsonResponse({"error": "url query parameter is required."}, status=400)
+
+  if not is_absolute_http_url(url):
+    return JsonResponse({"error": "Only absolute http/https URLs are allowed."}, status=400)
+
+  timeout_secs = getattr(settings, "BUILDINGS_MANIFEST_TIMEOUT_SECS", 10)
+  remote_request = urlrequest.Request(
+    url,
+    headers={
+      "User-Agent": "indoor-publicspace-collector/1.0",
+    },
+  )
+
+  try:
+    with urlrequest.urlopen(remote_request, timeout=timeout_secs) as response:
+      image_bytes = response.read(MAX_REMOTE_IMAGE_BYTES + 1)
+      content_type = response.headers.get_content_type() or "application/octet-stream"
+  except (OSError, ValueError, urlerror.URLError):
+    return JsonResponse({"error": "Could not fetch remote image from the provided URL."}, status=502)
+
+  if len(image_bytes) > MAX_REMOTE_IMAGE_BYTES:
+    return JsonResponse({"error": "Remote image is too large to proxy."}, status=413)
+
+  proxied_response = HttpResponse(image_bytes, content_type=content_type)
+  proxied_response["Cache-Control"] = "public, max-age=3600"
+  return proxied_response
+
+
+@require_http_methods(["GET"])
 def api_locate_via_gps(request: HttpRequest) -> JsonResponse:
   building_id = request.GET.get("building_id", "").strip()
   floor_id = request.GET.get("floor_id", "").strip()
@@ -222,6 +292,26 @@ def api_records(request: HttpRequest) -> JsonResponse:
         )
 
       records = [serialize_record(record) for record in query]
+      large_group_query = LargeGroupRecord.objects.all()
+
+      if building_id:
+        large_group_query = large_group_query.filter(building_id=building_id)
+      if floor_id:
+        large_group_query = large_group_query.filter(floor_id=floor_id)
+      if search_text:
+        large_group_query = large_group_query.filter(
+          Q(actor_id__icontains=search_text)
+          | Q(size_band__icontains=search_text)
+          | Q(gender_composition__icontains=search_text)
+          | Q(age_composition__icontains=search_text)
+          | Q(activity_description__icontains=search_text)
+          | Q(notes__icontains=search_text)
+          | Q(photo_name__icontains=search_text)
+          | Q(building_id__icontains=search_text)
+          | Q(floor_id__icontains=search_text)
+        )
+
+      records.extend(serialize_large_group_record(record) for record in large_group_query)
       return JsonResponse({"records": records})
     except DatabaseError as exc:
       return database_error_response(exc)
@@ -236,6 +326,25 @@ def api_records(request: HttpRequest) -> JsonResponse:
       uploaded_photo_object_name = save_uploaded_image_object(uploaded_photo, "activity-records")
 
     batch_payload = payload.get("records")
+    large_group_payload = payload.get("largeGroupRecord")
+    if batch_payload is not None and large_group_payload is not None:
+      raise ValidationError({"records": ["Submit either records or a largeGroupRecord, not both."]})
+
+    if large_group_payload is not None:
+      if not isinstance(large_group_payload, dict):
+        raise ValidationError({"largeGroupRecord": ["largeGroupRecord must be an object."]})
+
+      large_group_record = build_large_group_record_from_payload(
+        large_group_payload,
+        fallback_photo_object_name=uploaded_photo_object_name,
+        fallback_photo_name=uploaded_photo.name if uploaded_photo is not None else "",
+      )
+      with transaction.atomic():
+        assign_auto_actor_ids([large_group_record])
+        large_group_record.full_clean()
+        large_group_record.save()
+      return JsonResponse({"record": serialize_large_group_record(large_group_record)}, status=201)
+
     if batch_payload is not None:
       if not isinstance(batch_payload, list) or not batch_payload:
         raise ValidationError({"records": ["Provide at least one record payload."]})
@@ -432,6 +541,8 @@ def api_person_questionnaire_responses(request: HttpRequest) -> JsonResponse:
 def api_record_detail(request: HttpRequest, record_id) -> JsonResponse:
   try:
     record = ActivityRecord.objects.filter(id=record_id).first()
+    if record is None:
+      record = LargeGroupRecord.objects.filter(id=record_id).first()
   except DatabaseError as exc:
     return database_error_response(exc)
 
@@ -476,6 +587,7 @@ def api_site_observation_detail(request: HttpRequest, observation_id) -> JsonRes
 def api_records_export(request: HttpRequest) -> HttpResponse:
   try:
     records = [serialize_record(record) for record in ActivityRecord.objects.all()]
+    records.extend(serialize_large_group_record(record) for record in LargeGroupRecord.objects.all())
   except DatabaseError as exc:
     return database_error_response(exc)
 
@@ -559,6 +671,9 @@ def delete_image_object_if_unused(object_name: str) -> None:
     if ActivityRecord.objects.filter(photo_object_name=normalized_name).exists():
       return
 
+    if LargeGroupRecord.objects.filter(photo_object_name=normalized_name).exists():
+      return
+
     if SiteObservation.objects.filter(photo_object_name=normalized_name).exists():
       return
   except DatabaseError:
@@ -593,9 +708,10 @@ def build_auto_actor_id(cluster_number: int, person_number: int) -> str:
 
 def get_max_stored_auto_actor_cluster_number() -> int:
   max_cluster_number = 0
-  actor_ids = ActivityRecord.objects.filter(actor_id__istartswith="CL").values_list("actor_id", flat=True)
+  actor_ids = list(ActivityRecord.objects.filter(actor_id__istartswith="CL").values_list("actor_id", flat=True))
+  actor_ids.extend(LargeGroupRecord.objects.filter(actor_id__istartswith="CL").values_list("actor_id", flat=True))
 
-  for actor_id in actor_ids.iterator():
+  for actor_id in actor_ids:
     parsed_actor_id = parse_auto_actor_id(actor_id)
     if parsed_actor_id is None:
       continue
@@ -694,6 +810,55 @@ def build_record_from_payload(
     age_group=age_group,
     ethnic_group=ethnic_group,
     facial_expression=facial_expression,
+    activity_time=activity_time,
+    notes=notes,
+    location_x_pct=location_x_pct,
+    location_y_pct=location_y_pct,
+    photo_name=photo_name or fallback_photo_name,
+    photo_object_name=photo_object_name,
+    photo_preview_data_url=photo_preview_data_url,
+    photo_latitude=photo_latitude,
+    photo_longitude=photo_longitude,
+    photo_altitude=photo_altitude,
+  )
+
+
+def build_large_group_record_from_payload(
+  payload: dict[str, Any],
+  *,
+  fallback_photo_object_name: str = "",
+  fallback_photo_name: str = "",
+) -> LargeGroupRecord:
+  building_id = require_non_empty_string(payload, "buildingId")
+  floor_id = require_non_empty_string(payload, "floorId")
+  actor_id = optional_string(payload.get("actorId"))
+  size_band = parse_large_group_size_band(payload.get("sizeBand"))
+  gender_composition = parse_large_group_gender_composition(payload.get("genderComposition"))
+  age_composition = parse_large_group_age_composition(payload.get("ageComposition"))
+  activity_description = require_non_empty_string(payload, "activityDescription")
+  notes = optional_string(payload.get("notes"))
+  activity_time = parse_required_datetime(payload.get("activityTime"), "activityTime")
+
+  location = payload.get("location")
+  location_x_pct, location_y_pct = parse_location(location)
+
+  photo_name = optional_string(payload.get("photoName"))
+  photo_object_name = fallback_photo_object_name or optional_string(payload.get("photoObjectName"))
+  photo_preview_data_url = parse_photo_preview(payload.get("photoPreview"))
+  photo_location = payload.get("photoLocation")
+  photo_latitude, photo_longitude, photo_altitude = parse_photo_location(photo_location)
+
+  if location_x_pct is None and photo_latitude is None:
+    raise ValidationError({"location": ["Provide map coordinates or photo GPS coordinates."]})
+
+  return LargeGroupRecord(
+    building_id=building_id,
+    floor_id=floor_id,
+    actor_id=actor_id,
+    size_band=size_band,
+    gender_composition=gender_composition,
+    age_composition=age_composition,
+    activity_description=activity_description,
     activity_time=activity_time,
     notes=notes,
     location_x_pct=location_x_pct,
@@ -918,8 +1083,25 @@ def parse_gender(value: Any) -> str:
     raise ValidationError({"gender": ["Gender is required."]})
 
   normalized = value.strip().lower()
-  if normalized not in ALLOWED_GENDERS:
-    raise ValidationError({"gender": ["Gender must be either 'male' or 'female'."]})
+  allowed_values = ALLOWED_GENDERS | ALLOWED_LARGE_GROUP_GENDER_COMPOSITIONS
+  if normalized not in allowed_values:
+    raise ValidationError(
+      {
+        "gender": [
+          "Gender must be either 'male' or 'female', or one of the large-group compositions: only/majority male, half-half, only/majority female."
+        ]
+      }
+    )
+  return normalized
+
+
+def parse_large_group_gender_composition(value: Any) -> str:
+  if not isinstance(value, str):
+    raise ValidationError({"genderComposition": ["Gender composition is required."]})
+
+  normalized = value.strip().lower()
+  if normalized not in ALLOWED_LARGE_GROUP_GENDER_COMPOSITIONS:
+    raise ValidationError({"genderComposition": ["Gender composition is invalid."]})
   return normalized
 
 
@@ -928,9 +1110,31 @@ def parse_age_group(value: Any) -> str:
     raise ValidationError({"ageGroup": ["Age group is required."]})
 
   normalized = value.strip()
-  if normalized not in ALLOWED_AGE_GROUPS:
+  allowed_values = ALLOWED_AGE_GROUPS | ALLOWED_LARGE_GROUP_AGE_COMPOSITIONS
+  if normalized not in allowed_values:
     raise ValidationError({"ageGroup": ["Age group is invalid."]})
   return normalized
+
+
+def parse_large_group_age_composition(value: Any) -> str:
+  if not isinstance(value, str):
+    raise ValidationError({"ageComposition": ["Age composition is required."]})
+
+  normalized = value.strip().lower()
+  if normalized not in ALLOWED_LARGE_GROUP_AGE_COMPOSITIONS:
+    raise ValidationError({"ageComposition": ["Age composition is invalid."]})
+  return normalized
+
+
+def parse_large_group_size_band(value: Any) -> str:
+  if not isinstance(value, str):
+    raise ValidationError({"sizeBand": ["Size band is required."]})
+
+  normalized = value.strip().lower()
+  if normalized not in ALLOWED_LARGE_GROUP_SIZE_BANDS:
+    raise ValidationError({"sizeBand": ["Size band is invalid."]})
+  return normalized
+
 
 def parse_ethnic_group(value: Any) -> str:
   """Parses and validates the ethnic group field."""
@@ -1091,6 +1295,50 @@ def serialize_record(record: ActivityRecord) -> dict[str, Any]:
     "ageGroup": record.age_group or None,
     "ethnicGroup": record.ethnic_group or None,
     "facialExpression": record.facial_expression or None,
+    "activityTime": isoformat_utc(record.activity_time),
+    "notes": record.notes,
+    "location": location,
+    "photoName": record.photo_name or None,
+    "photoObjectName": record.photo_object_name or None,
+    "photoUrl": build_image_object_url(record.photo_object_name),
+    "photoPreview": record.photo_preview_data_url or None,
+    "photoLocation": photo_location,
+  }
+
+
+def serialize_large_group_record(record: LargeGroupRecord) -> dict[str, Any]:
+  location = None
+  if record.location_x_pct is not None and record.location_y_pct is not None:
+    location = {
+      "xPct": float(record.location_x_pct),
+      "yPct": float(record.location_y_pct),
+    }
+
+  photo_location = None
+  if record.photo_latitude is not None and record.photo_longitude is not None:
+    photo_location = {
+      "latitude": float(record.photo_latitude),
+      "longitude": float(record.photo_longitude),
+    }
+    if record.photo_altitude is not None:
+      photo_location["altitude"] = float(record.photo_altitude)
+
+  return {
+    "id": str(record.id),
+    "recordType": "largeGroup",
+    "createdAt": isoformat_utc(record.created_at),
+    "buildingId": record.building_id,
+    "floorId": record.floor_id,
+    "activityType": "Large Group",
+    "actorId": record.actor_id,
+    "gender": record.gender_composition or None,
+    "genderComposition": record.gender_composition or None,
+    "ethnicGroup": None,
+    "ageGroup": record.age_composition or None,
+    "ageComposition": record.age_composition or None,
+    "facialExpression": None,
+    "sizeBand": record.size_band,
+    "activityDescription": record.activity_description,
     "activityTime": isoformat_utc(record.activity_time),
     "notes": record.notes,
     "location": location,
@@ -1271,7 +1519,7 @@ def extract_floor_maps(folder: Path) -> dict[str, Any]:
   except Exception as e:
     print(f"DEBUG: UNHANDLED EXCEPTION in extract_floor_maps for folder {folder}. Error: {e}") # Debug print 10
     # Returning empty floors to ensure consistent behavior on error.
-    return {} 
+    return {}
 
   print(f"DEBUG: Finished extract_floor_maps for folder {folder}. Floors found: {len(floors)}") # Debug print 11
   return floors

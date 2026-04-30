@@ -22,7 +22,7 @@ ENV/
 
 # Environment files
 .env
-.env.*
+*/.env.*
 
 # Django runtime artifacts
 db.sqlite3

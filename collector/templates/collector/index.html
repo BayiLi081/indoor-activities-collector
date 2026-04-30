@@ -5,7 +5,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Indoor Activity Location Recorder</title>
-  <link rel="stylesheet" href="{% static 'collector/styles.css' %}?v=20260415-3">
+  <link rel="stylesheet" href="{% static 'collector/styles.css' %}?v=20260430-1">
 </head>
 <body>
   <header class="topbar">
@@ -84,9 +84,10 @@
             <div class="locate-button-row" role="group" aria-label="Map location tools">
               <button id="locateViaGpsBtn" type="button" class="secondary">Locate via GPS</button>
               <button id="locateViaPoiBtn" type="button" class="secondary" aria-pressed="false">Locate via POI</button>
+              <button id="locateViaPicBtn" type="button" class="secondary" aria-pressed="false">Locate via Pic</button>
             </div>
             <small id="locateStatus" class="locate-status" data-state="muted" role="status" aria-live="polite">
-              Use Locate via GPS for your approximate spot, or Locate via POI to show named places.
+              Use Locate via GPS for your approximate spot, Locate via POI to show named places, or Locate via Pic to preview linked images.
             </small>
           </div>
         </div>
@@ -115,6 +116,17 @@
         <button id="grpCounterDown" type="button" class="grpcounter-btn" aria-label="Decrease group count">-</button>
         <span id="groupValue" class="group-value">2</span>
         <button id="grpCounterUp" type="button" class="grpcounter-btn" aria-label="Increase group count">+</button>
+      </div>
+
+      <div id="largeGroupModeContainer" class="large-group-mode" hidden>
+        <label for="largeGroupModeSelect">
+          <span>Is this a large group?</span>
+          <select id="largeGroupModeSelect">
+            <option value="">Select group size type</option>
+            <option value="small">Small group</option>
+            <option value="large">Large group</option>
+          </select>
+        </label>
       </div>
 
       <div id="groupInteractionPanel" class="group-interaction-panel" hidden>
@@ -206,6 +218,46 @@
           <div id="groupPersonList" class="group-person-list"></div>
         </div>
 
+        <div id="largeGroupFields" class="large-group-fields" hidden>
+          <p id="largeGroupHint" class="field-hint">Capture one representative map point, then fill general composition.</p>
+          <label for="largeGroupSizeRange">
+            <span class="mandatory">Size Band</span>
+            <select id="largeGroupSizeRange">
+              <option value="">Select size band</option>
+              <option value="9-20 people">9-20 people</option>
+              <option value="20-50 people">20-50 people</option>
+              <option value="50-100 people">50-100 people</option>
+              <option value="more than 100 people">More than 100 people</option>
+            </select>
+          </label>
+          <label for="largeGroupGenderComposition">
+            <span class="mandatory">Gender Composition</span>
+            <select id="largeGroupGenderComposition">
+              <option value="">Select gender composition</option>
+              <option value="only male">Only male</option>
+              <option value="majority male">Majority male</option>
+              <option value="half-half">Half-half</option>
+              <option value="majority female">Majority female</option>
+              <option value="only female">Only female</option>
+            </select>
+          </label>
+          <label for="largeGroupAgeComposition">
+            <span class="mandatory">Age Composition</span>
+            <select id="largeGroupAgeComposition">
+              <option value="">Select age composition</option>
+              <option value="only young people">Only young people</option>
+              <option value="majority young people">Majority young people</option>
+              <option value="all age group">All age group</option>
+              <option value="majority elderly">Majority elderly</option>
+              <option value="only elderly">Only elderly</option>
+            </select>
+          </label>
+          <label for="largeGroupActivityDescription">
+            <span class="mandatory">Activity Description</span>
+            <textarea id="largeGroupActivityDescription" rows="3" placeholder="Describe the ongoing group activity"></textarea>
+          </label>
+        </div>
+
         <input id="activityTime" type="hidden">
 
         <div class="activity-extra-actions">
@@ -277,6 +329,16 @@
         </div>
 
         <div class="input-group">
+          <span class="mandatory">Ethnic Group</span>
+          <div class="gender-controls ethnic-group-controls" role="group" aria-label="Group member ethnic group">
+            <button type="button" class="toggle-btn ethnic-group-btn group-point-ethnic-btn" data-group-point-ethnic-group="Chinese" aria-pressed="false">Chinese</button>
+            <button type="button" class="toggle-btn ethnic-group-btn group-point-ethnic-btn" data-group-point-ethnic-group="Malay" aria-pressed="false">Malay</button>
+            <button type="button" class="toggle-btn ethnic-group-btn group-point-ethnic-btn" data-group-point-ethnic-group="Indian" aria-pressed="false">Indian</button>
+            <button type="button" class="toggle-btn ethnic-group-btn group-point-ethnic-btn" data-group-point-ethnic-group="Others" aria-pressed="false">Others</button>
+          </div>
+        </div>
+
+        <div class="input-group">
           <span class="mandatory">Age Group</span>
           <div class="gender-controls age-group-controls" role="group" aria-label="Group member age group">
             <button type="button" class="toggle-btn group-point-age-btn" data-group-point-age-group="under-10" data-group-point-age-label="<10 years old" aria-pressed="false">&lt;10 years old</button>
@@ -303,6 +365,27 @@
           <button id="groupPointSaveBtn" type="submit">Save Member</button>
         </div>
       </form>
+    </div>
+  </div>
+
+  <div id="picPreviewModal" class="modal-shell" hidden aria-hidden="true">
+    <div class="modal-backdrop" data-pic-preview-close></div>
+    <div class="modal-card pic-preview-modal-card" role="dialog" aria-modal="true" aria-labelledby="picPreviewModalTitle">
+      <div class="modal-head">
+        <div>
+          <h3 id="picPreviewModalTitle">Locate Via Pic Preview</h3>
+          <p id="picPreviewModalCoords" class="modal-subtitle">Map point</p>
+        </div>
+        <button id="picPreviewCloseBtn" type="button" class="secondary">Close</button>
+      </div>
+      <iframe
+        id="picPreviewFrame"
+        class="pic-preview-frame"
+        src="about:blank"
+        title="Locate Via Pic image preview"
+        loading="lazy"
+        referrerpolicy="strict-origin-when-cross-origin"
+      ></iframe>
     </div>
   </div>
 
@@ -500,6 +583,6 @@
   </div>
 
   {{ activity_catalog|json_script:"activityCatalogData" }}
-  <script type="module" src="{% static 'collector/app.js' %}?v=20260417-1"></script>
+  <script type="module" src="{% static 'collector/app.js' %}?v=20260430-1"></script>
 </body>
 </html>

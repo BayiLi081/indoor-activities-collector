@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>360 Viewer</title>
+
+  <link
+    rel="stylesheet"
+    href="https://cdn.jsdelivr.net/npm/pannellum@2.5.6/build/pannellum.css"
+  />
+
+  <style>
+    html, body {
+      height: 100%;
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background: #000;
+    }
+
+    #panorama {
+      width: 100%;
+      height: 100%;
+    }
+
+    #panorama .pnlm-controls-container {
+      top: 18px !important;
+      left: 18px !important;
+      transform: scale(1.8);
+      transform-origin: top left;
+      z-index: 1500;
+    }
+
+    #panorama .pnlm-control {
+      margin: 4px !important;
+    }
+
+    #panorama .pnlm-compass {
+      z-index: 1400;
+    }
+
+    @media (max-width: 768px) {
+      #panorama .pnlm-controls-container {
+        top: 12px !important;
+        left: 12px !important;
+        transform: scale(1.5);
+      }
+    }
+  </style>
+</head>
+<body>
+  <div id="panorama"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/pannellum@2.5.6/build/pannellum.js"></script>
+  <script>
+    function getParam(name) {
+      const params = new URLSearchParams(window.location.search);
+      return (params.get(name) || "").trim();
+    }
+
+    const originalPanorama = getParam("original");
+    if (!originalPanorama) {
+      throw new Error("Missing original panorama URL.");
+    }
+
+    pannellum.viewer("panorama", {
+      type: "equirectangular",
+      panorama: originalPanorama,
+      yaw: 180,
+      pitch: 0,
+      hfov: 100,
+      autoRotate: 0,
+      compass: true,
+      autoLoad: true,
+      showControls: true
+    });
+  </script>
+</body>
+</html>

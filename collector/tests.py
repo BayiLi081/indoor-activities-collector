@@ -4,7 +4,7 @@ from django.test import TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 
-from .models import ActivityRecord
+from .models import ActivityRecord, LargeGroupRecord
 
 
 @override_settings(MANAGEMENT_ACCESS_ENABLED=True, MANAGEMENT_ACCESS_CODE="test-code")
@@ -77,6 +77,33 @@ class AutoActorIdTests(TestCase):
     data = self.post_records(self.build_payload("CL0001-P001"))
 
     self.assertEqual(data["record"]["actorId"], "CL0003-P001")
+
+  def test_large_group_record_is_saved_in_dedicated_table(self):
+    payload = {
+      "largeGroupRecord": {
+        "buildingId": "SUTD",
+        "floorId": "main-buildings",
+        "actorId": "CL0001-P001",
+        "sizeBand": "20-50 people",
+        "genderComposition": "half-half",
+        "ageComposition": "all age group",
+        "activityDescription": "Watching a performance",
+        "activityTime": "2026-04-17T10:00:00Z",
+        "location": {"xPct": 50, "yPct": 60},
+      }
+    }
+
+    data = self.post_records(payload)
+
+    self.assertEqual(ActivityRecord.objects.count(), 0)
+    self.assertEqual(LargeGroupRecord.objects.count(), 1)
+    large_group = LargeGroupRecord.objects.get()
+    self.assertEqual(large_group.size_band, "20-50 people")
+    self.assertEqual(large_group.gender_composition, "half-half")
+    self.assertEqual(large_group.age_composition, "all age group")
+    self.assertEqual(large_group.activity_description, "Watching a performance")
+    self.assertEqual(data["record"]["recordType"], "largeGroup")
+    self.assertEqual(data["record"]["sizeBand"], "20-50 people")
 
   def test_custom_actor_id_is_not_rewritten(self):
     data = self.post_records(self.build_payload("manual-person-1"))
