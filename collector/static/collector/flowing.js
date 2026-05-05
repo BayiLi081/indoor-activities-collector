@@ -23,10 +23,10 @@ const LEGACY_BUILDING_MAPS = {
 };
 
 const AGE_GROUPS = [
-  { key: "under-10", label: "<10 years old" },
-  { key: "10-20", label: "10-20 years old" },
-  { key: "20-60", label: "20-60 years old" },
-  { key: "over-60", label: ">60 years old" },
+  { key: "under-10", label: "<10", fullLabel: "<10 years old" },
+  { key: "10-20", label: "10-20", fullLabel: "10-20 years old" },
+  { key: "20-60", label: "20-60", fullLabel: "20-60 years old" },
+  { key: "over-60", label: "60+", fullLabel: ">60 years old" },
 ];
 const GENDERS = [
   { key: "male", label: "Male" },
@@ -45,6 +45,7 @@ const zoomOutBtn = document.getElementById("zoomOutBtn");
 const zoomInBtn = document.getElementById("zoomInBtn");
 const zoomResetBtn = document.getElementById("zoomResetBtn");
 const zoomValue = document.getElementById("zoomValue");
+const drawLineBtn = document.getElementById("drawLineBtn");
 const clearLineBtn = document.getElementById("clearLineBtn");
 const flowingStatus = document.getElementById("flowingStatus");
 const directionLabel = document.getElementById("flowingDirectionLabel");
@@ -66,6 +67,7 @@ let pinchStartDistance = 0;
 let pinchStartZoom = DEFAULT_MAP_ZOOM;
 let crossline = null;
 let draftLine = null;
+let isLineDrawMode = false;
 let isDrawingLine = false;
 let activeDirectionIndex = 0;
 let timerSeconds = DIRECTION_SECONDS;
@@ -83,7 +85,7 @@ async function initialize() {
   buildingSelect.innerHTML = "<option>Loading...</option>";
   floorSelect.innerHTML = "<option>Loading...</option>";
   renderMatrix();
-  setStatus("Drag on the map to draw the crossline, then press Start.", "muted");
+  setStatus("Use Draw Line to place the crossline, then press Start.", "muted");
 
   buildingSelect.addEventListener("change", onBuildingChange);
   floorSelect.addEventListener("change", onFloorChange);
@@ -100,11 +102,13 @@ async function initialize() {
     updateMapEmptyState();
     renderCrossline();
     updateZoomControls();
+    updateSessionControls();
   });
   window.addEventListener("resize", renderCrossline);
   zoomOutBtn.addEventListener("click", () => changeMapZoom(-MAP_ZOOM_STEP));
   zoomInBtn.addEventListener("click", () => changeMapZoom(MAP_ZOOM_STEP));
   zoomResetBtn.addEventListener("click", () => setMapZoom(DEFAULT_MAP_ZOOM, { preserveCenter: false }));
+  drawLineBtn.addEventListener("click", toggleLineDrawMode);
   clearLineBtn.addEventListener("click", clearCrossline);
   startBtn.addEventListener("click", onTimerToggle);
   resetBtn.addEventListener("click", resetSession);
@@ -205,6 +209,7 @@ function updateMapForSelection() {
   if (!currentFloor) {
     mapImage.removeAttribute("src");
     mapImage.alt = "No indoor map available";
+    setLineDrawMode(false);
     updateMapEmptyState();
     return;
   }
@@ -215,7 +220,7 @@ function updateMapForSelection() {
 }
 
 function onMapPointerDown(event) {
-  if (!mapImage.getAttribute("src") || isTimerRunning) {
+  if (!mapImage.getAttribute("src") || isTimerRunning || !isLineDrawMode) {
     return;
   }
 
@@ -262,6 +267,7 @@ function onMapPointerUp(event) {
 
   if (distance < 8) {
     draftLine = null;
+    setLineDrawMode(true);
     renderCrossline();
     setStatus("Draw a longer crossline before starting.", "warn");
     return;
@@ -269,6 +275,7 @@ function onMapPointerUp(event) {
 
   crossline = draftLine;
   draftLine = null;
+  setLineDrawMode(false);
   renderCrossline();
   renderMatrix();
   setStatus("Crossline ready. Press Start when you are ready to count A -> B.", "success");
@@ -278,6 +285,7 @@ function onMapPointerUp(event) {
 function cancelDraftLine() {
   isDrawingLine = false;
   draftLine = null;
+  setLineDrawMode(false);
   renderCrossline();
 }
 
@@ -303,6 +311,7 @@ function clearCrossline() {
   crossline = null;
   draftLine = null;
   isDrawingLine = false;
+  setLineDrawMode(false);
   stopTimer();
   activeDirectionIndex = 0;
   timerSeconds = DIRECTION_SECONDS;
@@ -314,7 +323,7 @@ function clearCrossline() {
   renderMatrix();
   updateSessionControls();
   updateTimerDisplay();
-  setStatus("Draw a crossline on the map before starting.", "muted");
+  setStatus("Use Draw Line to place the crossline before starting.", "muted");
 }
 
 function renderCrossline() {
@@ -341,7 +350,8 @@ function renderCrossline() {
     x: -dy / length,
     y: dx / length,
   };
-  const arrowLength = Math.min(120, Math.max(62, length * 0.55));
+  const narrowMap = Math.min(width, height) < 520;
+  const arrowLength = Math.min(narrowMap ? 74 : 120, Math.max(narrowMap ? 42 : 62, length * 0.45));
   const sideA = clampPoint(
     { x: midpoint.x - normal.x * arrowLength * 0.5, y: midpoint.y - normal.y * arrowLength * 0.5 },
     width,
@@ -358,14 +368,16 @@ function renderCrossline() {
   const defs = createSvgElement("defs");
   const marker = createSvgElement("marker", {
     id: "flowingArrowHead",
-    markerWidth: "10",
-    markerHeight: "10",
-    refX: "8",
-    refY: "5",
+    markerWidth: narrowMap ? "12" : "10",
+    markerHeight: narrowMap ? "12" : "10",
+    refX: narrowMap ? "10" : "8",
+    refY: narrowMap ? "6" : "5",
     orient: "auto",
-    markerUnits: "strokeWidth",
+    markerUnits: narrowMap ? "userSpaceOnUse" : "strokeWidth",
   });
-  marker.appendChild(createSvgElement("path", { d: "M 0 0 L 10 5 L 0 10 z", fill: "#dc2626" }));
+  marker.appendChild(
+    createSvgElement("path", { d: narrowMap ? "M 0 0 L 12 6 L 0 12 z" : "M 0 0 L 10 5 L 0 10 z", fill: "#dc2626" })
+  );
   defs.appendChild(marker);
   flowingOverlay.appendChild(defs);
 
@@ -409,7 +421,7 @@ function renderMatrix() {
 
   const corner = document.createElement("div");
   corner.className = "flowing-matrix-corner";
-  corner.textContent = "Age Group";
+  corner.textContent = "Age";
   matrix.appendChild(corner);
 
   GENDERS.forEach((gender) => {
@@ -430,7 +442,7 @@ function renderMatrix() {
       cell.type = "button";
       cell.className = "flowing-matrix-cell";
       cell.disabled = !isCountingActive();
-      cell.setAttribute("aria-label", `Add one ${gender.label}, ${ageGroup.label}`);
+      cell.setAttribute("aria-label", `Add one ${gender.label}, ${ageGroup.fullLabel}`);
       cell.addEventListener("click", () => changeCount(ageGroup.key, gender.key, 1));
 
       const value = document.createElement("strong");
@@ -549,6 +561,27 @@ function isCountingActive() {
   return !!crossline && isTimerRunning;
 }
 
+function toggleLineDrawMode() {
+  if (!mapImage.getAttribute("src") || isTimerRunning) {
+    return;
+  }
+
+  setLineDrawMode(!isLineDrawMode);
+  setStatus(
+    isLineDrawMode ? "Draw mode active. Drag on the map to place the crossline." : "Map move and zoom are active.",
+    "muted"
+  );
+}
+
+function setLineDrawMode(enabled) {
+  isLineDrawMode = !!enabled && !isTimerRunning && !!mapImage.getAttribute("src");
+  mapWrap.classList.toggle("line-draw-mode", isLineDrawMode || isDrawingLine);
+  drawLineBtn.classList.toggle("active", isLineDrawMode);
+  drawLineBtn.setAttribute("aria-pressed", isLineDrawMode ? "true" : "false");
+  drawLineBtn.textContent = isLineDrawMode ? "Drawing..." : "Draw Line";
+  updateSessionControls();
+}
+
 function isFlowingSessionFinished() {
   return getActiveDirection() === "ba" && timerSeconds <= 0;
 }
@@ -560,6 +593,9 @@ function updateSessionControls() {
 
   startBtn.disabled = !hasLine || isSavingFlowingRecord || (isFinished && !!savedFlowingRecordId);
   startBtn.textContent = getPrimaryTimerButtonLabel(isFinished);
+  drawLineBtn.disabled = isTimerRunning || isSavingFlowingRecord || !mapImage.getAttribute("src");
+  drawLineBtn.classList.toggle("active", isLineDrawMode);
+  drawLineBtn.setAttribute("aria-pressed", isLineDrawMode ? "true" : "false");
   clearLineBtn.disabled = isTimerRunning;
 
   directionLabel.textContent = formatDirection(activeDirection);
@@ -567,7 +603,7 @@ function updateSessionControls() {
     ? "Counting in progress"
     : hasLine
       ? "Use the red arrow to confirm the crossing direction."
-      : "Draw a crossline before starting.";
+      : "Use Draw Line to place the crossline before starting.";
 }
 
 function getPrimaryTimerButtonLabel(isFinished) {
@@ -720,7 +756,7 @@ function updateZoomControls() {
 }
 
 function onMapWheel(event) {
-  if (!mapImage.getAttribute("src")) {
+  if (!mapImage.getAttribute("src") || isLineDrawMode || isDrawingLine) {
     return;
   }
 
@@ -735,7 +771,7 @@ function onMapWheel(event) {
 }
 
 function onMapTouchStart(event) {
-  if (event.touches.length !== 2) {
+  if (isLineDrawMode || isDrawingLine || event.touches.length !== 2) {
     return;
   }
   pinchStartDistance = getTouchDistance(event.touches[0], event.touches[1]);
@@ -743,7 +779,7 @@ function onMapTouchStart(event) {
 }
 
 function onMapTouchMove(event) {
-  if (event.touches.length !== 2 || !pinchStartDistance) {
+  if (isLineDrawMode || isDrawingLine || event.touches.length !== 2 || !pinchStartDistance) {
     return;
   }
 
