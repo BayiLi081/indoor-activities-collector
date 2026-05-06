@@ -68,9 +68,20 @@ def build_db_options() -> dict[str, str]:
 
   return options
 
+INSECURE_SECRET_KEY_MARKERS = {
+  "",
+  "change-me-in-production",
+  "changeme",
+  "secret",
+}
 
-SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "change-me-in-production")
-DEBUG = env_bool("DJANGO_DEBUG", True)
+SECRET_KEY = env_str("DJANGO_SECRET_KEY", "")
+if SECRET_KEY.strip().lower() in INSECURE_SECRET_KEY_MARKERS or len(SECRET_KEY) < 32:
+  raise ImproperlyConfigured(
+    "DJANGO_SECRET_KEY must be set to a strong value with at least 32 characters."
+  )
+
+DEBUG = env_bool("DJANGO_DEBUG", False)
 ALLOWED_HOSTS = env_list("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1,.azurewebsites.net")
 CSRF_TRUSTED_ORIGINS = env_list(
   "DJANGO_CSRF_TRUSTED_ORIGINS",
@@ -149,7 +160,21 @@ else:
 #print("DEBUG: Determined DATABASES configuration:") # New Debug print 1
 #print(json.dumps(DATABASES, indent=2, default=str)) # New Debug print 2
 
-AUTH_PASSWORD_VALIDATORS = []
+AUTH_PASSWORD_VALIDATORS = [
+  {
+    "NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator",
+  },
+  {
+    "NAME": "django.contrib.auth.password_validation.MinimumLengthValidator",
+    "OPTIONS": {"min_length": 12},
+  },
+  {
+    "NAME": "django.contrib.auth.password_validation.CommonPasswordValidator",
+  },
+  {
+    "NAME": "django.contrib.auth.password_validation.NumericPasswordValidator",
+  },
+]
 
 LANGUAGE_CODE = "en-us"
 TIME_ZONE = "UTC"
@@ -262,6 +287,10 @@ if LOCAL_TEST_MODE and not ASSETS_BASE_URL:
 if LOCAL_TEST_MODE and not BUILDINGS_MANIFEST_URL and ASSETS_BASE_URL:
   BUILDINGS_MANIFEST_URL = f"{ASSETS_BASE_URL.rstrip('/')}/buildings.manifest.json"
 BUILDINGS_MANIFEST_TIMEOUT_SECS = env_int("DJANGO_BUILDINGS_MANIFEST_TIMEOUT_SECS", 10)
+ASSET_PROXY_ALLOWED_HOSTS = env_list(
+  "DJANGO_ASSET_PROXY_ALLOWED_HOSTS",
+  "hubhumanactivities.blob.core.windows.net",
+)
 SYNC_BUILDINGS_ON_MIGRATE = env_bool("DJANGO_SYNC_BUILDINGS_ON_MIGRATE", True)
 
 # Azure App Service terminates TLS at the front door and forwards protocol via header.

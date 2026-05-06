@@ -82,8 +82,10 @@ let isSavingFlowingRecord = false;
 initialize();
 
 async function initialize() {
-  buildingSelect.innerHTML = "<option>Loading...</option>";
-  floorSelect.innerHTML = "<option>Loading...</option>";
+  buildingSelect.innerHTML = '<option value="" selected>Building</option>';
+  floorSelect.innerHTML = '<option value="" selected>Floor</option>';
+  setSelectPlaceholderState(buildingSelect);
+  setSelectPlaceholderState(floorSelect);
   renderMatrix();
   setStatus("Use Draw Line to place the crossline, then press Start.", "muted");
 
@@ -163,6 +165,7 @@ function renderBuildingOptions(preferredBuildingId = "") {
   if (!buildingIds.length) {
     buildingSelect.disabled = true;
     buildingSelect.appendChild(new Option("No buildings", ""));
+    setSelectPlaceholderState(buildingSelect);
     return;
   }
 
@@ -171,6 +174,7 @@ function renderBuildingOptions(preferredBuildingId = "") {
     buildingSelect.appendChild(new Option(getBuildingLabel(buildingId), buildingId));
   });
   buildingSelect.value = preferredBuildingId && buildingMaps[preferredBuildingId] ? preferredBuildingId : buildingIds[0];
+  setSelectPlaceholderState(buildingSelect);
 }
 
 function renderFloorOptions(buildingId, preferredFloorId = "") {
@@ -180,6 +184,7 @@ function renderFloorOptions(buildingId, preferredFloorId = "") {
   if (!floorIds.length) {
     floorSelect.disabled = true;
     floorSelect.appendChild(new Option("No floors", ""));
+    setSelectPlaceholderState(floorSelect);
     return;
   }
 
@@ -188,10 +193,12 @@ function renderFloorOptions(buildingId, preferredFloorId = "") {
     floorSelect.appendChild(new Option(getFloorLabel(buildingId, floorId), floorId));
   });
   floorSelect.value = floorIds.includes(preferredFloorId) ? preferredFloorId : floorIds[0];
+  setSelectPlaceholderState(floorSelect);
 }
 
 function onBuildingChange(event) {
   currentBuildingId = event.target.value;
+  setSelectPlaceholderState(buildingSelect);
   renderFloorOptions(currentBuildingId);
   currentFloorId = floorSelect.value || "";
   clearCrossline();
@@ -200,8 +207,16 @@ function onBuildingChange(event) {
 
 function onFloorChange(event) {
   currentFloorId = event.target.value;
+  setSelectPlaceholderState(floorSelect);
   clearCrossline();
   updateMapForSelection();
+}
+
+function setSelectPlaceholderState(selectElement) {
+  if (!selectElement) {
+    return;
+  }
+  selectElement.classList.toggle("is-placeholder", !selectElement.value);
 }
 
 function updateMapForSelection() {

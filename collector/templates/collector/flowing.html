@@ -5,17 +5,16 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Flowing People Counter</title>
-  <link rel="stylesheet" href="{% static 'collector/styles.css' %}?v=20260505-3">
+  <link rel="stylesheet" href="{% static 'collector/styles.css' %}?v=20260506-1">
 </head>
 <body>
   <header class="topbar">
     <div class="topbar-row">
       <div>
         <h1>Flowing People Counter</h1>
-        <p>Draw a crossline on the map, then count crossings by gender and age group for each direction.</p>
       </div>
       <nav class="topnav" aria-label="Primary">
-            <p id="flowingDirectionHint"></p>
+        <a href="{% url 'index' %}"{% if active_page == 'capture' %} class="active"{% endif %}>Capture</a>
         <a href="{% url 'flowing' %}"{% if active_page == 'flowing' %} class="active"{% endif %}>Flowing</a>
         <a href="{% url 'management' %}"{% if active_page == 'management' %} class="active"{% endif %}>Management</a>
       </nav>
@@ -26,11 +25,13 @@
     <section class="map-panel flowing-map-panel">
       <div class="panel-head">
         <div class="map-controls">
-          <label for="buildingSelect">Building</label>
-          <select id="buildingSelect" aria-label="Select building"></select>
+          <select id="buildingSelect" aria-label="Select building">
+            <option value="" selected>Building</option>
+          </select>
 
-          <label for="floorSelect">Floor</label>
-          <select id="floorSelect" aria-label="Select floor"></select>
+          <select id="floorSelect" aria-label="Select floor">
+            <option value="" selected>Floor</option>
+          </select>
         </div>
         <div class="panel-actions">
           <div class="zoom-controls" role="group" aria-label="Map zoom controls">
@@ -92,6 +93,6 @@
     </aside>
   </main>
 
-  <script type="module" src="{% static 'collector/flowing.js' %}?v=20260505-2"></script>
+  <script type="module" src="{% static 'collector/flowing.js' %}?v=20260506-1"></script>
 </body>
 </html>

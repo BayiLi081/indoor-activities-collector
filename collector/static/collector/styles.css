@@ -290,6 +290,14 @@ body {
   min-width: 150px;
 }
 
+.map-controls select.is-placeholder {
+  color: #98a2b3;
+}
+
+.map-controls select option {
+  color: var(--text);
+}
+
 .panel-actions {
   display: flex;
   align-items: center;

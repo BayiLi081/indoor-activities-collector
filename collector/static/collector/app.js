@@ -347,8 +347,10 @@ async function initialize() {
   setPoiOverlayButtonState(false);
   setSavePrompt("", "muted");
 
-  buildingSelect.innerHTML = "<option>Loading...</option>";
-  floorSelect.innerHTML = "<option>Loading...</option>";
+  buildingSelect.innerHTML = '<option value="" selected>Building</option>';
+  floorSelect.innerHTML = '<option value="" selected>Floor</option>';
+  setSelectPlaceholderState(buildingSelect);
+  setSelectPlaceholderState(floorSelect);
 
   buildingSelect.addEventListener("change", onBuildingChange);
   floorSelect.addEventListener("change", onFloorChange);
@@ -618,6 +620,7 @@ async function fetchBuildingMaps() {
 
 function onBuildingChange(event) {
   currentBuildingId = event.target.value;
+  setSelectPlaceholderState(buildingSelect);
   renderFloorOptions(currentBuildingId);
   currentFloorId = floorSelect.value || "";
   updateObservationContext();
@@ -638,6 +641,7 @@ function onBuildingChange(event) {
 
 function onFloorChange(event) {
   currentFloorId = event.target.value;
+  setSelectPlaceholderState(floorSelect);
   updateObservationContext();
   userLocationPoint = null;
   if (!poiVisible) {
@@ -1630,6 +1634,7 @@ function renderBuildingOptions(preferredBuildingId = "") {
     option.value = "";
     option.textContent = "No buildings";
     buildingSelect.appendChild(option);
+    setSelectPlaceholderState(buildingSelect);
     return;
   }
 
@@ -1644,6 +1649,7 @@ function renderBuildingOptions(preferredBuildingId = "") {
 
   buildingSelect.value =
     preferredBuildingId && buildingMaps[preferredBuildingId] ? preferredBuildingId : buildingIds[0];
+  setSelectPlaceholderState(buildingSelect);
 }
 
 function renderFloorOptions(buildingId, preferredFloorId = "") {
@@ -1656,6 +1662,7 @@ function renderFloorOptions(buildingId, preferredFloorId = "") {
     option.value = "";
     option.textContent = "No floors";
     floorSelect.appendChild(option);
+    setSelectPlaceholderState(floorSelect);
     return;
   }
 
@@ -1669,6 +1676,14 @@ function renderFloorOptions(buildingId, preferredFloorId = "") {
   });
 
   floorSelect.value = floorIds.includes(preferredFloorId) ? preferredFloorId : floorIds[0];
+  setSelectPlaceholderState(floorSelect);
+}
+
+function setSelectPlaceholderState(selectElement) {
+  if (!selectElement) {
+    return;
+  }
+  selectElement.classList.toggle("is-placeholder", !selectElement.value);
 }
 
 function updateMapForSelection() {
@@ -3381,7 +3396,8 @@ async function refreshPhotoOverlayForCurrentFloor({ loadingMessage = "" } = {}) 
     }
 
     renderMarkers();
-    setLocateStatus(error?.message || "Could not load photos.", "error");
+    console.error("Could not load photo data", { buildingId, floorId, error });
+    setLocateStatus("Could not load image points right now.", "error");
   } finally {
     if (requestToken === photoRequestToken && locateViaPicBtn) {
       locateViaPicBtn.disabled = false;
@@ -3428,7 +3444,8 @@ async function refreshPoiOverlayForCurrentFloor({ animate = false, loadingMessag
     }
 
     renderMarkers();
-    setLocateStatus(error?.message || "Could not load POIs.", "error");
+    console.error("Could not load POI data", { buildingId, floorId, error });
+    setLocateStatus("Could not load place points right now.", "error");
   } finally {
     if (requestToken === poiRequestToken) {
       setPoiLoadingState(false);
@@ -4135,7 +4152,7 @@ function buildPicOverlayStatus(buildingId, floorId) {
 
   if (photoMaps === null) {
     return {
-      message: `No photos.json found for ${getBuildingLabel(buildingId)}.`,
+      message: `No image points found for ${getBuildingLabel(buildingId)}.`,
       state: "warn",
     };
   }
@@ -4816,7 +4833,7 @@ function buildPoiOverlayStatus(buildingId, floorId) {
 
   if (poiMaps === null) {
     return {
-      message: `No poi.json found for ${getBuildingLabel(buildingId)}.`,
+      message: `No place points found for ${getBuildingLabel(buildingId)}.`,
       state: "warn",
     };
   }
@@ -4973,7 +4990,7 @@ async function loadPhotoMapsForBuilding(buildingId) {
     }
 
     if (!response.ok) {
-      throw new Error(`Could not load photos for ${getBuildingLabel(buildingId)} from ${photoAssetUrl}.`);
+      throw new Error(`Could not load photo data for ${getBuildingLabel(buildingId)}.`);
     }
 
     const payload = await response.json().catch(() => {

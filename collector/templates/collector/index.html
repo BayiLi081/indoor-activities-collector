@@ -5,7 +5,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Indoor Activity Location Recorder</title>
-  <link rel="stylesheet" href="{% static 'collector/styles.css' %}?v=20260430-1">
+  <link rel="stylesheet" href="{% static 'collector/styles.css' %}?v=20260506-2">
 </head>
 <body>
   <header class="topbar">
@@ -65,11 +65,13 @@
     <section class="map-panel">
       <div class="panel-head">
         <div class="map-controls">
-          <label for="buildingSelect">Building</label>
-          <select id="buildingSelect" aria-label="Select building"></select>
+          <select id="buildingSelect" aria-label="Select building">
+            <option value="" selected>Building</option>
+          </select>
 
-          <label for="floorSelect">Floor</label>
-          <select id="floorSelect" aria-label="Select floor"></select>
+          <select id="floorSelect" aria-label="Select floor">
+            <option value="" selected>Floor</option>
+          </select>
         </div>
         <div class="panel-actions">
           <div class="zoom-controls" role="group" aria-label="Map zoom controls">
@@ -584,6 +586,6 @@
   </div>
 
   {{ activity_catalog|json_script:"activityCatalogData" }}
-  <script type="module" src="{% static 'collector/app.js' %}?v=20260430-1"></script>
+  <script type="module" src="{% static 'collector/app.js' %}?v=20260506-3"></script>
 </body>
 </html>

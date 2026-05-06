@@ -87,6 +87,52 @@ def is_absolute_http_url(value: str) -> bool:
   return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
 
 
+def is_allowed_asset_proxy_url(value: str, allowed_hosts: list[str]) -> bool:
+  if not is_absolute_http_url(value):
+    return False
+
+  parsed = urlparse.urlsplit(value.strip())
+  hostname = normalize_hostname(parsed.hostname)
+  if not hostname:
+    return False
+
+  normalized_allowed_hosts = [normalize_allowed_host(host) for host in allowed_hosts]
+  normalized_allowed_hosts = [host for host in normalized_allowed_hosts if host]
+  if not normalized_allowed_hosts:
+    return False
+
+  return any(is_hostname_allowed(hostname, allowed_host) for allowed_host in normalized_allowed_hosts)
+
+
+def is_hostname_allowed(hostname: str, allowed_host: str) -> bool:
+  if allowed_host.startswith("."):
+    suffix = allowed_host[1:]
+    return hostname == suffix or hostname.endswith(f".{suffix}")
+
+  return hostname == allowed_host
+
+
+def normalize_allowed_host(value: Any) -> str:
+  if not isinstance(value, str):
+    return ""
+
+  stripped = value.strip().lower().rstrip(".")
+  if not stripped:
+    return ""
+
+  if stripped.startswith("."):
+    suffix = stripped[1:].lstrip(".")
+    return f".{suffix}" if suffix else ""
+
+  return stripped
+
+
+def normalize_hostname(value: Any) -> str:
+  if not isinstance(value, str):
+    return ""
+  return value.strip().lower().rstrip(".")
+
+
 def normalize_base_url(value: Any) -> str:
   text = normalize_text(value)
   if not text:

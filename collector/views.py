@@ -27,7 +27,7 @@ from .activity_catalog import (
   INDIVIDUAL_ACTIVITY_TYPE_OPTIONS,
   build_activity_catalog_payload,
 )
-from .asset_urls import fetch_json_from_url, get_effective_assets_base_url, is_absolute_http_url
+from .asset_urls import fetch_json_from_url, get_effective_assets_base_url, is_allowed_asset_proxy_url
 from .building_catalog import discover_building_maps as discover_building_maps_catalog
 from .floorplan_svg import convert_jpg_floorplan_to_svg, should_regenerate_jpg_wrapper
 from .locate_via_gps import GPSMappingError, get_floor_heading_offset, locate_map_point_from_gps
@@ -207,8 +207,9 @@ def api_asset_json(request: HttpRequest) -> JsonResponse:
   if not url:
     return JsonResponse({"error": "url query parameter is required."}, status=400)
 
-  if not is_absolute_http_url(url):
-    return JsonResponse({"error": "Only absolute http/https URLs are allowed."}, status=400)
+  allowed_hosts = getattr(settings, "ASSET_PROXY_ALLOWED_HOSTS", [])
+  if not is_allowed_asset_proxy_url(url, allowed_hosts):
+    return JsonResponse({"error": "Remote URL host is not allowed."}, status=403)
 
   timeout_secs = getattr(settings, "BUILDINGS_MANIFEST_TIMEOUT_SECS", 10)
   payload = fetch_json_from_url(url, timeout=timeout_secs, label="asset json")
@@ -227,8 +228,9 @@ def api_asset_image(request: HttpRequest) -> HttpResponse:
   if not url:
     return JsonResponse({"error": "url query parameter is required."}, status=400)
 
-  if not is_absolute_http_url(url):
-    return JsonResponse({"error": "Only absolute http/https URLs are allowed."}, status=400)
+  allowed_hosts = getattr(settings, "ASSET_PROXY_ALLOWED_HOSTS", [])
+  if not is_allowed_asset_proxy_url(url, allowed_hosts):
+    return JsonResponse({"error": "Remote URL host is not allowed."}, status=403)
 
   timeout_secs = getattr(settings, "BUILDINGS_MANIFEST_TIMEOUT_SECS", 10)
   remote_request = urlrequest.Request(
